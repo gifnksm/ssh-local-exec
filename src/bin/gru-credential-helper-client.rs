@@ -61,7 +61,7 @@ async fn main() -> eyre::Result<()> {
 
     let (stdin_bytes_tx, stdin_bytes_rx) = mpsc::channel(1);
     let (stdin_res_tx, stdin_res_rx) = mpsc::channel(1);
-    let stdin_thread = thread::Builder::new()
+    let _stdin_thread = thread::Builder::new()
         .name("stdin".into())
         .spawn(|| {
             let _span = tracing::info_span!("stdin").entered();
