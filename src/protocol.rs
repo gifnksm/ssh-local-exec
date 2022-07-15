@@ -2,16 +2,16 @@ use std::sync::Arc;
 
 use bytes::BytesMut;
 use serde::{Deserialize, Serialize};
-use tokio_serde::{formats::Cbor, Framed};
+use tokio_serde::{formats::MessagePack, Framed};
 
-pub type Sender<Transport, SinkItem> = Framed<Transport, (), SinkItem, Cbor<(), SinkItem>>;
+pub type Sender<Transport, SinkItem> = Framed<Transport, (), SinkItem, MessagePack<(), SinkItem>>;
 pub fn new_sender<Transport, SinkItem>(stream: Transport) -> Sender<Transport, SinkItem> {
-    Sender::new(stream, Cbor::default())
+    Sender::new(stream, MessagePack::default())
 }
 
-pub type Receiver<Transport, Item> = Framed<Transport, Item, (), Cbor<Item, ()>>;
+pub type Receiver<Transport, Item> = Framed<Transport, Item, (), MessagePack<Item, ()>>;
 pub fn new_receiver<Transport, Item>(stream: Transport) -> Receiver<Transport, Item> {
-    Receiver::new(stream, Cbor::default())
+    Receiver::new(stream, MessagePack::default())
 }
 
 #[derive(Debug, Clone, Copy, clap::Subcommand, Serialize, Deserialize)]
