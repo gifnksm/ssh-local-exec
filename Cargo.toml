@@ -15,7 +15,7 @@ clap = { version = "3.2.16", features = ["derive", "env"] }
 color-eyre = "0.6.2"
 derive_more = { version = "0.99.17", default-features = false, features = ["from"] }
 futures = { version = "0.3.21", default-features = false, features = ["std", "async-await"] }
-serde = { version = "1.0.142", features = ["derive", "rc"] }
+serde = { version = "1.0.143", features = ["derive", "rc"] }
 thiserror = "1.0.32"
 tokio = { version = "1.20.1", features = ["macros", "net", "rt-multi-thread", "process", "io-util"] }
 tokio-serde = { version = "0.8.0", features = ["messagepack"] }
