@@ -33,7 +33,7 @@ impl ToSocketAddrs for str {
     async fn to_socket_addrs(&self) -> io::Result<Box<dyn Iterator<Item = SocketAddr> + '_>> {
         let unix_addr = self
             .strip_prefix("unix:")
-            .or_else(|| self.contains('/').then(|| self));
+            .or_else(|| self.contains('/').then_some(self));
 
         if let Some(addr) = unix_addr {
             let addr = std::os::unix::net::SocketAddr::from_pathname(addr)?;
