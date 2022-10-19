@@ -9,7 +9,7 @@ repository = "https://github.com/gifnksm/git-remote-utils"
 license = "MIT or Apache-2.0"
 
 [dependencies]
-async-trait = "0.1.57"
+async-trait = "0.1.58"
 bytes = { version = "1.2.1", features = ["serde"] }
 clap = { version = "4.0.16", features = ["derive", "env"] }
 color-eyre = "0.6.2"
