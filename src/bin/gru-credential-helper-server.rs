@@ -78,9 +78,9 @@ async fn handle_client(stream: SocketStream) -> eyre::Result<()> {
 
     let mut cmd = process::Command::new("git");
     match command {
-        Command::Get => cmd.args(&["credential", "fill"]),
-        Command::Store => cmd.args(&["credential", "approve"]),
-        Command::Erase => cmd.args(&["credential", "reject"]),
+        Command::Get => cmd.args(["credential", "fill"]),
+        Command::Store => cmd.args(["credential", "approve"]),
+        Command::Erase => cmd.args(["credential", "reject"]),
     };
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
