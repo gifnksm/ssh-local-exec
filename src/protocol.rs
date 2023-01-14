@@ -14,19 +14,10 @@ pub fn new_receiver<Transport, Item>(stream: Transport) -> Receiver<Transport, I
     Receiver::new(stream, MessagePack::default())
 }
 
-#[derive(Debug, Clone, Copy, clap::Subcommand, Serialize, Deserialize)]
-pub enum Command {
-    /// Returns a matching credential from remote server, if any exists
-    Get,
-    /// Store the credential to remote server, if applicable to helper
-    Store,
-    /// Remove a matching credential from remote server, if any, from the helper's storage
-    Erase,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpawnMessage {
-    pub command: Command,
+    pub command: String,
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -31,20 +31,35 @@ where
 #[async_trait]
 impl ToSocketAddrs for str {
     async fn to_socket_addrs(&self) -> io::Result<Box<dyn Iterator<Item = SocketAddr> + '_>> {
-        let unix_addr = self
-            .strip_prefix("unix:")
-            .or_else(|| self.contains('/').then_some(self));
-
-        if let Some(addr) = unix_addr {
-            let addr = std::os::unix::net::SocketAddr::from_pathname(addr)?;
-            return Ok(Box::new(iter::once(addr.into())));
+        enum Addr<'a> {
+            Inet(&'a str),
+            Unix(&'a str),
         }
 
         // TODO: support @name syntax (abstract socket)
         // blocked by `feature(unix_socket_abstract)` https://github.com/rust-lang/rust/issues/85410
 
-        let addrs = net::lookup_host(self).await?;
-        Ok(Box::new(addrs.map(Into::into)))
+        let addr = if let Some(inet_addr) = self.strip_prefix("inet:") {
+            Addr::Inet(inet_addr)
+        } else if let Some(unix_addr) = self
+            .strip_prefix("unix:")
+            .or_else(|| self.contains('/').then_some(self))
+        {
+            Addr::Unix(unix_addr)
+        } else {
+            Addr::Inet(self)
+        };
+
+        match addr {
+            Addr::Inet(addr) => {
+                let addrs = net::lookup_host(addr).await?;
+                Ok(Box::new(addrs.map(Into::into)))
+            }
+            Addr::Unix(addr) => {
+                let addr = std::os::unix::net::SocketAddr::from_pathname(addr)?;
+                Ok(Box::new(iter::once(addr.into())))
+            }
+        }
     }
 }
 

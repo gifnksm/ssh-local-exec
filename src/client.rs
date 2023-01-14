@@ -1,58 +1,33 @@
-use std::{fmt::Debug, io, sync::Arc, thread};
+use std::{io, sync::Arc, thread};
 
 use bytes::BytesMut;
-use clap::Parser as _;
 use color_eyre::eyre::{self, WrapErr as _};
 use futures::{future, stream, SinkExt as _, StreamExt as _, TryStreamExt};
-use ssh_local_exec::{
-    self as sle,
-    protocol::{
-        self, ClientMessage, Command, OutputRequest, OutputResponse, ServerMessage, SpawnMessage,
-    },
-    socket::SocketStream,
-};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use tracing::Instrument;
 
-/// Git remote utils credential helper client
-#[derive(Debug, clap::Parser)]
-#[clap(author, version, about)]
-struct Args {
-    /// Server's internet socket address (address:port) or Unix socket address (path)
-    #[clap(
-        short,
-        long = "connect",
-        value_name = "ADDRESS",
-        env = "GRU_CREDENTIAL_HELPER_CONNECT_ADDR"
-    )]
-    connect_addr: String,
-    /// Command to execute
-    #[clap(subcommand)]
-    command: Command,
-}
+use crate::{
+    protocol::{self, ClientMessage, OutputRequest, OutputResponse, ServerMessage, SpawnMessage},
+    socket::{SocketStream, ToSocketAddrs},
+};
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
-    color_eyre::install()?;
-    tracing_subscriber::fmt::init();
-
-    let Args {
-        connect_addr,
-        command,
-    } = Args::parse();
-
-    let stream = SocketStream::connect(&connect_addr)
+pub async fn main(
+    remote_endpoints: impl ToSocketAddrs,
+    command: String,
+    args: Vec<String>,
+) -> eyre::Result<()> {
+    let stream = SocketStream::connect(remote_endpoints)
         .await
-        .wrap_err_with(|| format!("failed to connect socket: {connect_addr}"))?;
+        .wrap_err("failed to connect socket")?;
     let (read_stream, write_stream) = stream.into_split();
 
     let read_stream = FramedRead::new(read_stream, LengthDelimitedCodec::new());
     let mut write_stream = FramedWrite::new(write_stream, LengthDelimitedCodec::new());
 
     protocol::new_sender(&mut write_stream)
-        .send(SpawnMessage { command })
+        .send(SpawnMessage { command, args })
         .await
         .wrap_err("failed to send spawn request")?;
 
@@ -65,7 +40,7 @@ async fn main() -> eyre::Result<()> {
         .name("stdin".into())
         .spawn(|| {
             let _span = tracing::info_span!("stdin").entered();
-            sle::thread::input(io::stdin(), stdin_bytes_tx, stdin_res_rx)
+            crate::thread::input(io::stdin(), stdin_bytes_tx, stdin_res_rx)
         })
         .wrap_err("failed to spawn thread")?;
 
@@ -75,7 +50,7 @@ async fn main() -> eyre::Result<()> {
         .name("stdout".into())
         .spawn(|| {
             let _span = tracing::info_span!("stdout").entered();
-            sle::thread::output(io::stdout(), stdout_res_tx, stdout_bytes_rx)
+            crate::thread::output(io::stdout(), stdout_res_tx, stdout_bytes_rx)
         })
         .wrap_err("failed to spawn thread")?;
 
@@ -85,7 +60,7 @@ async fn main() -> eyre::Result<()> {
         .name("stderr".into())
         .spawn(|| {
             let _span = tracing::info_span!("stderr").entered();
-            sle::thread::output(io::stderr(), stderr_res_tx, stderr_bytes_rx)
+            crate::thread::output(io::stderr(), stderr_res_tx, stderr_bytes_rx)
         })
         .wrap_err("failed to spawn thread")?;
 

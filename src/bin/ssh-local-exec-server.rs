@@ -7,8 +7,7 @@ use futures::{channel::oneshot, future, stream, SinkExt, StreamExt as _, TryStre
 use ssh_local_exec::{
     self as sle,
     protocol::{
-        self, ClientMessage, Command, Exit, OutputRequest, OutputResponse, ServerMessage,
-        SpawnMessage,
+        self, ClientMessage, Exit, OutputRequest, OutputResponse, ServerMessage, SpawnMessage,
     },
     socket::{SocketListener, SocketStream},
 };
@@ -17,7 +16,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use tracing::Instrument;
 
-/// Git remote utils credential helper server
+/// Server for executing commands on the SSH local host
 #[derive(Debug, clap::Parser)]
 #[clap(author, version, about)]
 struct Args {
@@ -26,7 +25,7 @@ struct Args {
         short,
         long = "bind",
         value_name = "ADDRESS",
-        env = "GRU_CREDENTIAL_HELPER_BIND_ADDR"
+        env = "SSH_LOCAL_EXEC_SERVER_BIND_ADDR"
     )]
     bind_addr: String,
 }
@@ -68,7 +67,7 @@ async fn handle_client(stream: SocketStream) -> eyre::Result<()> {
     let mut read_stream = FramedRead::new(read_stream, LengthDelimitedCodec::new());
     let write_stream = FramedWrite::new(write_stream, LengthDelimitedCodec::new());
 
-    let SpawnMessage { command } = protocol::new_receiver(&mut read_stream)
+    let SpawnMessage { command, args } = protocol::new_receiver(&mut read_stream)
         .try_next()
         .await
         .wrap_err("failed to receive message")?
@@ -76,13 +75,9 @@ async fn handle_client(stream: SocketStream) -> eyre::Result<()> {
 
     tracing::debug!("received request: {:?}", command);
 
-    let mut cmd = process::Command::new("git");
-    match command {
-        Command::Get => cmd.args(["credential", "fill"]),
-        Command::Store => cmd.args(["credential", "approve"]),
-        Command::Erase => cmd.args(["credential", "reject"]),
-    };
-    cmd.stdin(Stdio::piped())
+    let mut cmd = process::Command::new(&command);
+    cmd.args(&args)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
