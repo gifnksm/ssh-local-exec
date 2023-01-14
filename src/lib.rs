@@ -1,3 +1,5 @@
+pub mod args;
+pub mod client;
 pub mod protocol;
 pub mod socket;
 pub mod task;
