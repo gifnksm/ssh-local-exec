@@ -4,8 +4,8 @@ use bytes::BytesMut;
 use clap::Parser as _;
 use color_eyre::eyre::{self, WrapErr as _};
 use futures::{future, stream, SinkExt as _, StreamExt as _, TryStreamExt};
-use git_remote_utils::{
-    self as gru,
+use ssh_local_exec::{
+    self as sle,
     protocol::{
         self, ClientMessage, Command, OutputRequest, OutputResponse, ServerMessage, SpawnMessage,
     },
@@ -65,7 +65,7 @@ async fn main() -> eyre::Result<()> {
         .name("stdin".into())
         .spawn(|| {
             let _span = tracing::info_span!("stdin").entered();
-            gru::thread::input(io::stdin(), stdin_bytes_tx, stdin_res_rx)
+            sle::thread::input(io::stdin(), stdin_bytes_tx, stdin_res_rx)
         })
         .wrap_err("failed to spawn thread")?;
 
@@ -75,7 +75,7 @@ async fn main() -> eyre::Result<()> {
         .name("stdout".into())
         .spawn(|| {
             let _span = tracing::info_span!("stdout").entered();
-            gru::thread::output(io::stdout(), stdout_res_tx, stdout_bytes_rx)
+            sle::thread::output(io::stdout(), stdout_res_tx, stdout_bytes_rx)
         })
         .wrap_err("failed to spawn thread")?;
 
@@ -85,7 +85,7 @@ async fn main() -> eyre::Result<()> {
         .name("stderr".into())
         .spawn(|| {
             let _span = tracing::info_span!("stderr").entered();
-            gru::thread::output(io::stderr(), stderr_res_tx, stderr_bytes_rx)
+            sle::thread::output(io::stderr(), stderr_res_tx, stderr_bytes_rx)
         })
         .wrap_err("failed to spawn thread")?;
 

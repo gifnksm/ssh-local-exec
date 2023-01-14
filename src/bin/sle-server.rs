@@ -4,8 +4,8 @@ use bytes::BytesMut;
 use clap::Parser as _;
 use color_eyre::eyre::{self, eyre, WrapErr as _};
 use futures::{channel::oneshot, future, stream, SinkExt, StreamExt as _, TryStreamExt};
-use git_remote_utils::{
-    self as gru,
+use ssh_local_exec::{
+    self as sle,
     protocol::{
         self, ClientMessage, Command, Exit, OutputRequest, OutputResponse, ServerMessage,
         SpawnMessage,
@@ -126,7 +126,7 @@ async fn handle_client(stream: SocketStream) -> eyre::Result<()> {
     let (stdin_bytes_tx, stdin_bytes_rx) = mpsc::channel(1);
     let (stdin_res_tx, stdin_res_rx) = mpsc::channel(1);
     tokio::spawn(
-        gru::task::output(stdin, stdin_res_tx, stdin_bytes_rx)
+        sle::task::output(stdin, stdin_res_tx, stdin_bytes_rx)
             .in_current_span()
             .instrument(tracing::info_span!("stdin")),
     );
@@ -134,7 +134,7 @@ async fn handle_client(stream: SocketStream) -> eyre::Result<()> {
     let (stdout_bytes_tx, stdout_bytes_rx) = mpsc::channel(1);
     let (stdout_res_tx, stdout_res_rx) = mpsc::channel(1);
     tokio::spawn(
-        gru::task::input(stdout, stdout_bytes_tx, stdout_res_rx)
+        sle::task::input(stdout, stdout_bytes_tx, stdout_res_rx)
             .in_current_span()
             .instrument(tracing::info_span!("stdout")),
     );
@@ -142,7 +142,7 @@ async fn handle_client(stream: SocketStream) -> eyre::Result<()> {
     let (stderr_bytes_tx, stderr_bytes_rx) = mpsc::channel(1);
     let (stderr_res_tx, stderr_res_rx) = mpsc::channel(1);
     tokio::spawn(
-        gru::task::input(stderr, stderr_bytes_tx, stderr_res_rx)
+        sle::task::input(stderr, stderr_bytes_tx, stderr_res_rx)
             .in_current_span()
             .instrument(tracing::info_span!("stderr")),
     );

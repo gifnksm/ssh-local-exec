@@ -298,26 +298,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dec7af912d60cdbd3677c1af9352ebae6fb8394d165568a2234df0fa00f87793"
 
 [[package]]
-name = "git-remote-utils"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bytes",
- "clap",
- "color-eyre",
- "derive_more",
- "futures",
- "serde",
- "thiserror",
- "tokio",
- "tokio-serde",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "heck"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -695,6 +675,26 @@ checksum = "02e2d2db9033d13a1567121ddd7a095ee144db4e1ca1b1bda3419bc0da294ebd"
 dependencies = [
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "ssh-local-exec"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "clap",
+ "color-eyre",
+ "derive_more",
+ "futures",
+ "serde",
+ "thiserror",
+ "tokio",
+ "tokio-serde",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
