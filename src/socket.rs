@@ -82,14 +82,16 @@ impl Display for SocketAddr {
         match self {
             Self::UnixStd(addr) => match addr.as_pathname() {
                 Some(path) => write!(f, "unix:{}", path.display()),
+                None if addr.is_unnamed() => write!(f, "unix:<unnamed>"),
                 // TODO: support abstract socket
                 // blocked by `feature(unix_socket_abstract)` https://github.com/rust-lang/rust/issues/85410
                 None => unimplemented!("abstract socket not supported"),
             },
             Self::UnixTokio(addr) => match addr.as_pathname() {
                 Some(path) => write!(f, "unix:{}", path.display()),
+                None if addr.is_unnamed() => write!(f, "unix:<unnamed>"),
                 // TODO: support abstract socket
-                // blocked by https://github.com/tokio-rs/tokio/issues/4610
+                // blocked by `feature(unix_socket_abstract)` https://github.com/rust-lang/rust/issues/85410
                 None => unimplemented!("abstract socket not supported"),
             },
             Self::Inet(addr) => write!(f, "{addr}"),
@@ -117,18 +119,20 @@ impl SocketListener {
         let mut last_err = None;
         for addr in addrs.to_socket_addrs().await? {
             let res = match addr {
-                SocketAddr::UnixStd(addr) => {
+                SocketAddr::UnixStd(addr) => match addr.as_pathname() {
+                    Some(path) => UnixListener::bind(path).map(Into::into),
+                    None if addr.is_unnamed() => panic!("cannot bind to unnamed socket"),
                     // TODO: support abstract socket
                     // blocked by https://github.com/tokio-rs/tokio/issues/4610
-                    let path = addr.as_pathname().expect("abstract socket not supported");
-                    UnixListener::bind(path).map(Into::into)
-                }
-                SocketAddr::UnixTokio(addr) => {
+                    None => panic!("abstract socket not supported"),
+                },
+                SocketAddr::UnixTokio(addr) => match addr.as_pathname() {
+                    Some(path) => UnixListener::bind(path).map(Into::into),
+                    None if addr.is_unnamed() => panic!("cannot bind to unnamed socket"),
                     // TODO: support abstract socket
                     // blocked by https://github.com/tokio-rs/tokio/issues/4610
-                    let path = addr.as_pathname().expect("abstract socket not supported");
-                    UnixListener::bind(path).map(Into::into)
-                }
+                    None => panic!("abstract socket not supported"),
+                },
                 SocketAddr::Inet(addr) => TcpListener::bind(addr).await.map(Into::into),
             };
             match res {
