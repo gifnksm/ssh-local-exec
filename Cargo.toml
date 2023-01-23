@@ -9,7 +9,7 @@ repository = "https://github.com/gifnksm/ssh-local-exec"
 license = "MIT or Apache-2.0"
 
 [dependencies]
-async-trait = "0.1.61"
+async-trait = "0.1.63"
 bytes = { version = "1.3.0", features = ["serde"] }
 clap = { version = "4.0.32", features = ["derive", "env"] }
 color-eyre = "0.6.2"
