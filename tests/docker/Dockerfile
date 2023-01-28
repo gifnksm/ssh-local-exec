@@ -5,11 +5,15 @@ FROM archlinux:base-devel
 # Set default shell for building image
 SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]
 
+ADD https://raw.githubusercontent.com/eficode/wait-for/v2.2.3/wait-for /usr/local/bin/wait-for
+
 RUN \
   --mount=type=cache,target=/var/cache \
   <<END
 pacman -Syu --noconfirm
-pacman -S jq openssh rsync rustup --noconfirm
+pacman -S jq openssh rsync rustup gnu-netcat wget --noconfirm
+
+chmod +rx /usr/local/bin/wait-for
 
 useradd -m sle
 mkdir /work
@@ -21,6 +25,7 @@ Host *
   StrictHostKeyChecking no
 SSH_END
 END
+
 
 USER sle
 

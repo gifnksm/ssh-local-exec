@@ -10,12 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
-        with:
-            toolchain: stable
-            profile: minimal
-            components: rustfmt
-            override: true
+      - uses: dtolnay/rust-toolchain@stable
       - name: rustfmt-check
         run: cargo fmt --all --check
 
@@ -38,12 +33,7 @@ jobs:
           name: Clippy (stable) Results
           token: ${{ secrets.GITHUB_TOKEN }}
           args: --all-features --all-targets -- -D warnings
-      - uses: actions-rs/toolchain@v1
-        with:
-            toolchain: stable
-            profile: minimal
-            components: clippy
-            override: true
+      - uses: dtolnay/rust-toolchain@stable
       - name: Run clippy manually without annotations
         if: ${{ !steps.check_permissions.outputs.has-permission }}
         run: cargo clippy --all-features --all-targets -- -D warnings
@@ -60,11 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
-        with:
-            toolchain: stable
-            profile: minimal
-            override: true
+      - uses: dtolnay/rust-toolchain@stable
       - name: build docker image
         run: docker compose -f tests/docker/docker-compose.yml build
       - name: cargo test
@@ -74,11 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
-        with:
-            toolchain: stable
-            profile: minimal
-            override: true
+      - uses: dtolnay/rust-toolchain@stable
       - name: cargo build
         run: cargo build --workspace --all-targets --all-features
 
@@ -87,14 +69,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
-          components: llvm-tools-preview
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
+      - name: build docker image
+        run: docker compose -f tests/docker/docker-compose.yml build
       - name: Generate code coverage
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
       - name: Upload coverage to Codecov

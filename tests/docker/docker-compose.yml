@@ -4,11 +4,9 @@ services:
     build:
       context: ../../
       dockerfile: tests/docker/Dockerfile
-    image: ssh-local-exec-test
+    image: ssh-local-exec-test:${TAG:-latest}
     privileged: true
   client:
     hostname: client
-    image: ssh-local-exec-test
-    depends_on:
-      - server
+    image: ssh-local-exec-test:${TAG:-latest}
     privileged: true

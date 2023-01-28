@@ -841,6 +841,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-serde",
+ "tokio-shutdown",
  "tokio-stream",
  "tokio-util",
  "tracing",
@@ -951,6 +952,16 @@ dependencies = [
  "pin-project",
  "rmp-serde",
  "serde",
+]
+
+[[package]]
+name = "tokio-shutdown"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38f6b5f9a967211d2b3892dcb03a8251eb13ac8759e69f2a14471f6f779867da"
+dependencies = [
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
