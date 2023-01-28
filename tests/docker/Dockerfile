@@ -26,6 +26,13 @@ Host *
 SSH_END
 END
 
+COPY ./tests/docker/assets/ /opt/ssh-local-exec/
+RUN <<END
+ln -s /opt/ssh-local-exec/run-command /usr/local/bin/ssh-local-exec
+ln -s /opt/ssh-local-exec/run-command /usr/local/bin/ssh-local-exec-server
+ln -s /opt/ssh-local-exec/run-command /usr/local/bin/git-credential-ssh-local
+END
+
 
 USER sle
 
@@ -47,7 +54,6 @@ RUN \
 cargo build
 END
 
-ENV PATH="/work/target/debug/:$PATH"
 
 # hadolint ignore=DL3002
 USER root
