@@ -4,6 +4,7 @@ use bytes::BytesMut;
 use color_eyre::eyre::{self, eyre, WrapErr as _};
 use futures::{channel::oneshot, future, stream, SinkExt, StreamExt as _, TryStreamExt};
 use tokio::{process, sync::mpsc};
+use tokio_shutdown::Shutdown;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
@@ -21,24 +22,37 @@ pub async fn main(local_endpoint: &LocalEndpoint) -> eyre::Result<()> {
         .await
         .wrap_err_with(|| format!("failed to bind socket: {local_endpoint}"))?;
 
+    tracing::info!("listening on {local_endpoint}");
+
+    let shutdown = Shutdown::new()?;
+
     for client_id in 0.. {
-        match listener.accept().await {
-            Ok((stream, addr)) => {
-                tokio::spawn(
-                    async move {
-                        tracing::info!("accepted connection from {}", addr);
-                        if let Err(e) = handle_client(stream).await {
-                            tracing::error!("{e:?}");
-                        }
+        tokio::select! {
+            _ = shutdown.handle() => {
+                break
+            },
+            res = listener.accept() => {
+                match res {
+                    Ok((stream, addr)) => {
+                        tokio::spawn(
+                            async move {
+                                tracing::info!("accepted connection from {}", addr);
+                                if let Err(e) = handle_client(stream).await {
+                                    tracing::error!("{e:?}");
+                                }
+                            }
+                            .instrument(tracing::info_span!("client", id = client_id)),
+                        );
                     }
-                    .instrument(tracing::info_span!("client", id = client_id)),
-                );
+                    Err(e) => tracing::info!("failed to accept: {e}"),
+                }
             }
-            Err(e) => tracing::info!("failed to accept: {e}"),
         }
     }
 
-    unreachable!()
+    tracing::info!("shutting down");
+
+    Ok(())
 }
 
 #[tracing::instrument(level = "info", err, ret, skip_all)]

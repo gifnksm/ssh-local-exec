@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use assert_cmd::prelude::*;
 use docker_utils::{DockerCompose, ProjectId, Service, User};
@@ -46,14 +46,16 @@ fn execute_command() {
     let project_id = ProjectId::new(env!("CARGO_PKG_NAME"));
     let mut compose = DockerCompose::up(project_id);
 
-    compose
-        .exec_detatched(
+    let server = compose
+        .exec(
             Service::Server,
             User::Sle,
             ["ssh-local-exec-server", "--local-endpoint", "server:22222"],
         )
-        .assert()
-        .success();
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
 
     compose
         .exec(
@@ -70,6 +72,17 @@ fn execute_command() {
         .assert()
         .stdout(predicate::eq("server\n"))
         .success();
+
+    compose
+        .exec(
+            Service::Server,
+            User::Sle,
+            ["killall", "ssh-local-exec-server"],
+        )
+        .assert()
+        .success();
+
+    server.wait_with_output().unwrap().assert().success();
 
     compose.down();
 }
