@@ -9,6 +9,4 @@ services:
   client:
     hostname: client
     image: ssh-local-exec-test:${TAG:-latest}
-    depends_on:
-      - server
     privileged: true
