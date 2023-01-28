@@ -22,7 +22,6 @@ impl ProjectId {
         };
 
         static SEQ_NO: AtomicU32 = AtomicU32::new(0);
-        // let pkg_name = env!("CARGO_PKG_NAME");
         let pid = process::id();
         let seq_no = SEQ_NO.fetch_add(1, Ordering::SeqCst);
         Self {
@@ -40,6 +39,8 @@ pub enum Service {
 }
 
 impl Service {
+    const ALL: &[Service] = &[Self::Server, Self::Client];
+
     fn as_str(&self) -> &'static str {
         match self {
             Self::Server => "server",
@@ -78,15 +79,20 @@ impl fmt::Display for User {
 #[derive(Debug)]
 pub struct DockerCompose {
     project_id: ProjectId,
+    finalized: bool,
 }
 
 impl DockerCompose {
     fn compose(project_id: Option<&ProjectId>) -> Command {
         static DOCKER_COMPOSE_FILE: &str =
             concat!(env!("CARGO_MANIFEST_DIR"), "/../docker/docker-compose.yml");
+        #[cfg(not(coverage))]
+        static ENV_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docker/.env.debug");
+        #[cfg(coverage)]
+        static ENV_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docker/.env.coverage");
 
         let mut cmd = Command::new("docker");
-        cmd.args(["compose", "-f", DOCKER_COMPOSE_FILE]);
+        cmd.args(["compose", "-f", DOCKER_COMPOSE_FILE, "--env-file", ENV_FILE]);
         if let Some(project_id) = project_id {
             cmd.args(["-p", &project_id.to_string()]);
         }
@@ -105,10 +111,35 @@ impl DockerCompose {
             .args(["up", "-d"])
             .assert()
             .success();
-        Self { project_id }
+        Self {
+            project_id,
+            finalized: false,
+        }
     }
 
     pub fn down(&mut self) {
+        if !self.finalized {
+            self.finalized = true;
+            for service in Service::ALL {
+                self.exec(*service, User::Sle, ["/opt/ssh-local-exec/finalize"])
+                    .assert()
+                    .success();
+            }
+            #[cfg(coverage)]
+            {
+                for service in Service::ALL {
+                    Self::compose(Some(&self.project_id))
+                        .args([
+                            "cp",
+                            &format!("{service}:/work/target/lcov/"),
+                            &format!("lcov.{}.{}", self.project_id, service),
+                        ])
+                        .assert()
+                        .success();
+                }
+            }
+        }
+
         Self::compose(Some(&self.project_id))
             .args(["down", "--volumes"])
             .assert()

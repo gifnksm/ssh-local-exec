@@ -1,25 +1,21 @@
 #!/bin/bash
 
-set -euo pipefail
+set -euxo pipefail
 
-command="$(basename "$0")"
+cd /work
 
 build_type="$(cat /opt/ssh-local-exec/build-type)"
 
 . /opt/ssh-local-exec/env
 
 case "${build_type}" in
-debug)
-    bin_dir=/work/target/debug
-    ;;
+debug) ;;
 coverage)
-    bin_dir=/work/target/debug
+    mkdir /work/target/lcov
+    cargo llvm-cov report --lcov >/work/target/lcov/lcov.info
     ;;
 *)
     echo "unknown build-type: ${build_type}" >&2
     exit 1
     ;;
 esac
-
-# Run the command
-exec "$bin_dir/$command" "$@"
