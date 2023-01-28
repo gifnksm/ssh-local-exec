@@ -38,10 +38,11 @@ COPY --chown=sle:sle . /work/
 
 RUN \
   --mount=type=cache,uid=1000,gid=1000,target=/home/sle/.cargo/registry \
-  --mount=type=cache,uid=1000,gid=1000,target=/work/target \
   <<END
 cargo build
 END
+
+ENV PATH="/work/target/debug/:$PATH"
 
 # hadolint ignore=DL3002
 USER root
