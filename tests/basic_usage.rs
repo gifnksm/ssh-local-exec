@@ -91,3 +91,66 @@ fn execute_command() {
 
     compose.down();
 }
+
+#[test]
+fn execute_command_via_ssh() {
+    let project_id = ProjectId::new(env!("CARGO_PKG_NAME"));
+    let mut compose = DockerCompose::up(project_id);
+
+    let server = compose
+        .exec(
+            Service::Client,
+            User::Sle,
+            [
+                "ssh-local-exec-server",
+                "--local-endpoint",
+                "localhost:22222",
+            ],
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    compose
+        .exec(Service::Client, User::Sle, ["wait-for", "localhost:22222"])
+        .assert()
+        .success();
+    compose
+        .exec(Service::Server, User::Sle, ["wait-for", "localhost:22"])
+        .assert()
+        .success();
+
+    compose
+        .exec(
+            Service::Client,
+            User::Sle,
+            [
+                "ssh",
+                "server",
+                "-R",
+                "localhost:33333:localhost:22222",
+                "ssh-local-exec",
+                "--remote-endpoint",
+                "localhost:33333",
+                "cat",
+                "/etc/hostname",
+            ],
+        )
+        .assert()
+        .stdout(predicate::eq("client\n"))
+        .success();
+
+    compose
+        .exec(
+            Service::Client,
+            User::Sle,
+            ["killall", "ssh-local-exec-server"],
+        )
+        .assert()
+        .success();
+
+    server.wait_with_output().unwrap().assert().success();
+
+    compose.down();
+}

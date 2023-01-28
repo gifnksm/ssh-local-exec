@@ -3,4 +3,5 @@
 !src/
 !Cargo.toml
 !Cargo.lock
+!tests/docker/assets/*
 !tests/docker-utils/

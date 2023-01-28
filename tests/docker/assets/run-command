@@ -1,0 +1,6 @@
+#!/bin/bash -eu
+
+command="$(basename "$0")"
+
+# Run the command
+exec /work/target/debug/"$command" "$@"
