@@ -4,6 +4,8 @@ services:
     build:
       context: ../../
       dockerfile: tests/docker/Dockerfile
+      args:
+        - BUILD_TYPE=${BUILD_TYPE:-debug}
     image: ssh-local-exec-test:${TAG:-latest}
     privileged: true
   client:
