@@ -1,0 +1,14 @@
+services:
+  server:
+    hostname: server
+    build:
+      context: ../../
+      dockerfile: tests/docker/Dockerfile
+    image: ssh-local-exec-test
+    privileged: true
+  client:
+    hostname: client
+    image: ssh-local-exec-test
+    depends_on:
+      - server
+    privileged: true
