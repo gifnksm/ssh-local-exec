@@ -40,3 +40,36 @@ fn compose_sanity_check() {
 
     compose.down();
 }
+
+#[test]
+fn execute_command() {
+    let project_id = ProjectId::new(env!("CARGO_PKG_NAME"));
+    let mut compose = DockerCompose::up(project_id);
+
+    compose
+        .exec_detatched(
+            Service::Server,
+            User::Sle,
+            ["ssh-local-exec-server", "--local-endpoint", "server:22222"],
+        )
+        .assert()
+        .success();
+
+    compose
+        .exec(
+            Service::Client,
+            User::Sle,
+            [
+                "ssh-local-exec",
+                "--remote-endpoint",
+                "server:22222",
+                "cat",
+                "/etc/hostname",
+            ],
+        )
+        .assert()
+        .stdout(predicate::eq("server\n"))
+        .success();
+
+    compose.down();
+}

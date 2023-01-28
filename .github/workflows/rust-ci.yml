@@ -65,6 +65,8 @@ jobs:
             toolchain: stable
             profile: minimal
             override: true
+      - name: build docker image
+        run: docker compose -f tests/docker/docker-compose.yml build
       - name: cargo test
         run: cargo test --workspace --all-targets --all-features
 

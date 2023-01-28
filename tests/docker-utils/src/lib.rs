@@ -125,6 +125,17 @@ impl DockerCompose {
             .args(command);
         cmd
     }
+
+    pub fn exec_detatched<I, S>(&self, service: Service, user: User, command: I) -> Command
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut cmd = Self::compose(Some(&self.project_id));
+        cmd.args(["exec", "-u", user.as_str(), "-d", service.as_str()])
+            .args(command);
+        cmd
+    }
 }
 
 impl Drop for DockerCompose {
