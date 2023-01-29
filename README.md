@@ -13,6 +13,9 @@
 
 ssh-local-exec is a simple command line utility that provides a way to execute a command on the SSH local host from the remote host.
 
+**CURRENTLY, THIS COMMAND IS NOT SECURE.**
+Any user on the remote machine can execute the command on the local machine.
+
 ```console
 # Launch ssh-local-exec server
 $ ssh-local-exec-server --listen localhost:22222
