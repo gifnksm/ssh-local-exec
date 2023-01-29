@@ -2,14 +2,14 @@ use std::fmt::Debug;
 
 use clap::Parser as _;
 use color_eyre::eyre;
-use ssh_local_exec::args::RemoteEndpoint;
+use ssh_local_exec::args::ConnectAddress;
 
 /// Git credential helper to retrieving and storing credentials on the SSH local host
 #[derive(Debug, clap::Parser)]
 #[clap(author, version, about)]
 struct Args {
     #[clap(flatten)]
-    remote_endpoint: RemoteEndpoint,
+    connect_address: ConnectAddress,
     /// Git credential helper command to execute
     #[clap(subcommand)]
     command: Command,
@@ -31,7 +31,7 @@ async fn main() -> eyre::Result<()> {
     tracing_subscriber::fmt::init();
 
     let Args {
-        remote_endpoint,
+        connect_address,
         command: credential_command,
     } = Args::parse();
 
@@ -43,7 +43,7 @@ async fn main() -> eyre::Result<()> {
     };
     let args = args.iter().copied().map(String::from).collect();
 
-    ssh_local_exec::client::main(&remote_endpoint, command, args).await?;
+    ssh_local_exec::client::main(&connect_address, command, args).await?;
 
     Ok(())
 }

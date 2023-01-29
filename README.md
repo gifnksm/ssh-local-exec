@@ -15,13 +15,13 @@ ssh-local-exec is a simple command line utility that provides a way to execute a
 
 ```console
 # Launch ssh-local-exec server
-$ ssh-local-exec-server --local-endpoint localhost:22222
+$ ssh-local-exec-server --listen localhost:22222
 
 # Log in to the remote host with the reverse port forwarding
 $ ssh -R 33333:localhost:22222 remote-host
 
 # Execute a command on the local host from the remote host
-$ ssh-local-exec --remote-endpoint localhost:33333 -- hostname
+$ ssh-local-exec --connect localhost:33333 -- hostname
 # => local-host
 ```
 

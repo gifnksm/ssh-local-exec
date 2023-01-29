@@ -9,19 +9,19 @@ use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use tracing::Instrument;
 
 use crate::{
-    args::RemoteEndpoint,
+    args::ConnectAddress,
     protocol::{self, ClientMessage, OutputRequest, OutputResponse, ServerMessage, SpawnMessage},
     socket::SocketStream,
 };
 
 pub async fn main(
-    remote_endpoint: &RemoteEndpoint,
+    connect_address: &ConnectAddress,
     command: String,
     args: Vec<String>,
 ) -> eyre::Result<()> {
-    let stream = SocketStream::connect(remote_endpoint)
+    let stream = SocketStream::connect(connect_address)
         .await
-        .wrap_err_with(|| format!("failed to connect socket: {remote_endpoint}"))?;
+        .wrap_err_with(|| format!("failed to connect socket: {connect_address}"))?;
     let (read_stream, write_stream) = stream.into_split();
 
     let read_stream = FramedRead::new(read_stream, LengthDelimitedCodec::new());

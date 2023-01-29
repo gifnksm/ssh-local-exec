@@ -50,7 +50,7 @@ fn execute_command() {
         .exec(
             Service::Server,
             User::Sle,
-            ["ssh-local-exec-server", "--local-endpoint", "server:22222"],
+            ["ssh-local-exec-server", "--listen", "server:22222"],
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -68,7 +68,7 @@ fn execute_command() {
             User::Sle,
             [
                 "ssh-local-exec",
-                "--remote-endpoint",
+                "--connect",
                 "server:22222",
                 "cat",
                 "/etc/hostname",
@@ -101,11 +101,7 @@ fn execute_command_via_ssh() {
         .exec(
             Service::Client,
             User::Sle,
-            [
-                "ssh-local-exec-server",
-                "--local-endpoint",
-                "localhost:22222",
-            ],
+            ["ssh-local-exec-server", "--listen", "localhost:22222"],
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -131,7 +127,7 @@ fn execute_command_via_ssh() {
                 "-R",
                 "localhost:33333:localhost:22222",
                 "ssh-local-exec",
-                "--remote-endpoint",
+                "--connect",
                 "localhost:33333",
                 "cat",
                 "/etc/hostname",
