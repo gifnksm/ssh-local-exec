@@ -82,3 +82,15 @@ jobs:
           files: lcov.info,lcov.*/*.info
           fail_ci_if_error: true
 
+  readme:
+    name: Check README
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-sync-rdme
+        uses: taiki-e/install-action@v1
+        with:
+          tool: cargo-sync-rdme
+      - name: Check README
+        run: cargo sync-rdme --check --workspace
