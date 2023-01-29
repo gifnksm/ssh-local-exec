@@ -5,70 +5,68 @@ use async_trait::async_trait;
 use crate::socket::{SocketAddr, ToSocketAddrs};
 
 #[derive(Debug, clap::Args)]
-pub struct LocalEndpoint {
-    /// Server endpoint address on the local host
+pub struct ListenAddress {
+    /// Server endpoint address to listen
     ///
     /// Possible values:
     /// Internet (`<address>:<port>` / `inet:<address>:<port>`) or
     /// UNIX domain socket (`<path>` / `unix:<path>`)
     #[clap(
-        short = 'l',
-        long = "local-endpoint",
+        long = "listen",
         value_name = "SOCKET_ADDRESS",
-        env = "SSH_LOCAL_EXEC_LOCAL_ENDPOINT"
+        env = "SSH_LOCAL_EXEC_LISTEN_ADDRESS"
     )]
     value: String,
 }
 
 #[async_trait]
-impl ToSocketAddrs for LocalEndpoint {
+impl ToSocketAddrs for ListenAddress {
     async fn to_socket_addrs(&self) -> io::Result<Box<dyn Iterator<Item = SocketAddr> + '_>> {
         self.as_str().to_socket_addrs().await
     }
 }
 
-impl LocalEndpoint {
+impl ListenAddress {
     pub fn as_str(&self) -> &str {
         &self.value
     }
 }
 
-impl fmt::Display for LocalEndpoint {
+impl fmt::Display for ListenAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self.as_str(), f)
     }
 }
 
 #[derive(Debug, clap::Args)]
-pub struct RemoteEndpoint {
-    /// Server endpoint address on the remote host
+pub struct ConnectAddress {
+    /// Server endpoint address to connect
     ///
     /// Possible values:
     /// Internet (`<address>:<port>` / `inet:<address>:<port>`) or
     /// UNIX domain socket (`<path>` / `unix:<path>`)
     #[clap(
-        short = 'r',
-        long = "remote-endpoint",
+        long = "connect",
         value_name = "SOCKET_ADDRESS",
-        env = "SSH_LOCAL_EXEC_REMOTE_ENDPOINT"
+        env = "SSH_LOCAL_EXEC_CONNECT_ADDRESS"
     )]
     value: String,
 }
 
 #[async_trait]
-impl ToSocketAddrs for RemoteEndpoint {
+impl ToSocketAddrs for ConnectAddress {
     async fn to_socket_addrs(&self) -> io::Result<Box<dyn Iterator<Item = SocketAddr> + '_>> {
         self.as_str().to_socket_addrs().await
     }
 }
 
-impl RemoteEndpoint {
+impl ConnectAddress {
     pub fn as_str(&self) -> &str {
         &self.value
     }
 }
 
-impl fmt::Display for RemoteEndpoint {
+impl fmt::Display for ConnectAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self.as_str(), f)
     }

@@ -9,7 +9,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
 use crate::{
-    args::LocalEndpoint,
+    args::ListenAddress,
     protocol::{
         self, ClientMessage, Exit, OutputRequest, OutputResponse, ServerMessage, SpawnMessage,
     },
@@ -17,12 +17,12 @@ use crate::{
 };
 use tracing::Instrument;
 
-pub async fn main(local_endpoint: &LocalEndpoint) -> eyre::Result<()> {
-    let listener = SocketListener::bind(&local_endpoint)
+pub async fn main(listen_address: &ListenAddress) -> eyre::Result<()> {
+    let listener = SocketListener::bind(&listen_address)
         .await
-        .wrap_err_with(|| format!("failed to bind socket: {local_endpoint}"))?;
+        .wrap_err_with(|| format!("failed to bind socket: {listen_address}"))?;
 
-    tracing::info!("listening on {local_endpoint}");
+    tracing::info!("listening on {listen_address}");
 
     let shutdown = Shutdown::new()?;
 
