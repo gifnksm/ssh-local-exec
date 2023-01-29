@@ -7,6 +7,19 @@ authors = ["gifnksm <makoto.nksm+github@gmail.com>"]
 description = "Execute a command on the SSH local host from the remote host"
 repository = "https://github.com/gifnksm/ssh-local-exec"
 license = "MIT or Apache-2.0"
+rust-version = "1.64.0"
+
+[package.metadata.cargo-sync-rdme.badge]
+style = "flat-square"
+
+[package.metadata.cargo-sync-rdme.badge.badges]
+maintenance = true
+license = { link = "#license" }
+crates-io = true
+docs-rs = true
+rust-version = true
+github-actions = { workflows = ["rust-ci.yml"] }
+codecov = true
 
 [dependencies]
 async-trait = "0.1.63"
@@ -32,3 +45,6 @@ docker-utils = { path = "tests/docker-utils" }
 
 [workspace]
 members = ["tests/docker-utils"]
+
+[badges]
+maintenance = { status = "experimental"}
