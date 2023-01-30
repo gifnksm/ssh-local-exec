@@ -1,16 +1,18 @@
-use std::{io, sync::Arc, thread};
+use std::{io, process::ExitCode, sync::Arc, thread};
 
 use bytes::BytesMut;
 use color_eyre::eyre::{self, WrapErr as _};
 use futures::{future, stream, SinkExt as _, StreamExt as _, TryStreamExt};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use tracing::Instrument;
 
 use crate::{
     args::ConnectAddress,
-    protocol::{self, ClientMessage, OutputRequest, OutputResponse, ServerMessage, SpawnMessage},
+    protocol::{
+        self, ClientMessage, Exit, OutputRequest, OutputResponse, ServerMessage, SpawnMessage,
+    },
     socket::SocketStream,
 };
 
@@ -18,7 +20,7 @@ pub async fn main(
     connect_address: &ConnectAddress,
     command: String,
     args: Vec<String>,
-) -> eyre::Result<()> {
+) -> eyre::Result<ExitCode> {
     let stream = SocketStream::connect(connect_address)
         .await
         .wrap_err_with(|| format!("failed to connect socket: {connect_address}"))?;
@@ -65,8 +67,10 @@ pub async fn main(
         })
         .wrap_err("failed to spawn thread")?;
 
+    let (exit_code_tx, exit_code_rx) = oneshot::channel();
     tokio::spawn(receive(
         receiver,
+        exit_code_tx,
         stdin_res_tx,
         stdout_bytes_tx,
         stderr_bytes_tx,
@@ -95,20 +99,32 @@ pub async fn main(
         .instrument(tracing::info_span!("send")),
     );
 
-    //let _stdin_res = stdin_thread.join();
+    // Wait for output threads to complete to ensure that all outputs are flushed.
+    // Don't wait for stdin thread to complete because it will block until stdin is closed.
     let _stdout_res = stdout_thread.join();
     let _stderr_res = stderr_thread.join();
 
-    Ok(())
+    let code = match exit_code_rx.await {
+        Ok(Exit::Code(code)) => u8::try_from(code).ok(),
+        Ok(Exit::Signal(signal)) => u8::try_from(128 + signal).ok(),
+        Ok(Exit::OtherError(_)) => None,
+        Err(e) => {
+            tracing::error!("failed to receive exit code: {e:?}");
+            None
+        }
+    };
+    Ok(ExitCode::from(code.unwrap_or(255)))
 }
 
 #[tracing::instrument(level = "debug", err, ret, skip_all)]
 async fn receive(
     mut receiver: impl TryStreamExt<Ok = ServerMessage, Error = io::Error> + Unpin,
+    exit_code_tx: oneshot::Sender<Exit>,
     stdin_tx: mpsc::Sender<Result<(), String>>,
     stdout_tx: mpsc::Sender<Arc<BytesMut>>,
     stderr_tx: mpsc::Sender<Arc<BytesMut>>,
 ) -> eyre::Result<()> {
+    let mut exit_code_tx = Some(exit_code_tx);
     let mut stdout_tx = Some(stdout_tx);
     let mut stderr_tx = Some(stderr_tx);
     while let Some(msg) = receiver
@@ -118,9 +134,19 @@ async fn receive(
     {
         tracing::trace!("received message: {:?}", msg);
         match msg {
-            ServerMessage::Exit(_code) => {
-                // tracing::info!("server exited with code: {}", code);
-                // return Ok(());
+            ServerMessage::Exit(exit) => {
+                match &exit {
+                    Exit::Code(code) => {
+                        tracing::info!("command exited with code: {}", code);
+                    }
+                    Exit::Signal(signal) => {
+                        tracing::info!("command exited with signal: {}", signal);
+                    }
+                    Exit::OtherError(ref error) => {
+                        tracing::error!("command exited with error: {}", error);
+                    }
+                }
+                exit_code_tx.take().unwrap().send(exit).unwrap();
             }
             ServerMessage::Stdin(msg) => match msg {
                 OutputResponse(msg) => {

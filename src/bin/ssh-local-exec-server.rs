@@ -13,7 +13,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-    tracing_subscriber::fmt::init();
+    ssh_local_exec::log::install()?;
 
     let Args { listen_address } = Args::parse();
 

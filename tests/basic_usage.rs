@@ -58,7 +58,7 @@ fn execute_command() {
         .unwrap();
 
     compose
-        .exec(Service::Server, User::Sle, ["wait-for", "server:22222"])
+        .exec(Service::Client, User::Sle, ["wait-for", "server:22222"])
         .assert()
         .success();
 
