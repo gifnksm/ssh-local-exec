@@ -69,6 +69,9 @@ async fn handle_client(stream: SocketStream) -> eyre::Result<()> {
 
     tracing::debug!("received request: {:?}", command);
 
+    let receiver = protocol::new_receiver::<_, ClientMessage>(read_stream);
+    let mut sender = protocol::new_sender::<_, ServerMessage>(write_stream);
+
     let mut cmd = process::Command::new(&command);
     cmd.args(&args)
         .stdin(Stdio::piped())
@@ -76,15 +79,29 @@ async fn handle_client(stream: SocketStream) -> eyre::Result<()> {
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
-    let mut child = cmd.spawn().wrap_err("failed to spawn child process")?;
+    let mut child = match cmd.spawn().wrap_err("failed to spawn child process") {
+        Ok(child) => child,
+        Err(e) => {
+            tracing::warn!("{e:?}");
+            // notify error exit status to client
+            sender
+                .send(ServerMessage::Exit(Exit::OtherError(format!("{e:?}"))))
+                .await?;
+            // close output channels
+            sender
+                .send(ServerMessage::Stdout(OutputRequest::Terminated))
+                .await?;
+            sender
+                .send(ServerMessage::Stderr(OutputRequest::Terminated))
+                .await?;
+            return Ok(());
+        }
+    };
     let stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
 
     tracing::debug!("spawned child process: {:?}", child.id());
-
-    let receiver = protocol::new_receiver::<_, ClientMessage>(read_stream);
-    let mut sender = protocol::new_sender::<_, ServerMessage>(write_stream);
 
     let (exit_tx, exit_rx) = oneshot::channel();
     tokio::spawn(

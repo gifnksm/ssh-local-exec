@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, process::ExitCode};
 
 use clap::Parser as _;
 use color_eyre::eyre;
@@ -17,9 +17,9 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> eyre::Result<()> {
+async fn main() -> eyre::Result<ExitCode> {
     color_eyre::install()?;
-    tracing_subscriber::fmt::init();
+    ssh_local_exec::log::install()?;
 
     let Args {
         connect_address,
@@ -27,7 +27,7 @@ async fn main() -> eyre::Result<()> {
         args,
     } = Args::parse();
 
-    ssh_local_exec::client::main(&connect_address, command, args).await?;
+    let exit_code = ssh_local_exec::client::main(&connect_address, command, args).await?;
 
-    Ok(())
+    Ok(exit_code)
 }
