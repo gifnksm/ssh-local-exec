@@ -9,8 +9,9 @@ use tokio::{
 
 const BUFFER_SIZE: usize = 4 * 1024;
 
-#[tracing::instrument(level = "debug", err, ret, skip_all)]
-pub async fn input(
+#[tracing::instrument(level = "debug", err, ret, skip_all, fields(ty = ty))]
+pub async fn read(
+    ty: &'static str,
     mut input: impl AsyncRead + Unpin,
     tx: mpsc::Sender<Arc<BytesMut>>,
     mut rx: mpsc::Receiver<Result<(), String>>,
@@ -48,8 +49,9 @@ pub async fn input(
     Ok(())
 }
 
-#[tracing::instrument(level = "debug", err, ret, skip_all)]
-pub async fn output(
+#[tracing::instrument(level = "debug", err, ret, skip_all, fields(ty = ty))]
+pub async fn write(
+    ty: &'static str,
     mut output: impl AsyncWrite + Unpin,
     tx: mpsc::Sender<Result<(), String>>,
     mut rx: mpsc::Receiver<Arc<BytesMut>>,
