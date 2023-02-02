@@ -9,8 +9,9 @@ use tokio::sync::mpsc;
 
 const BUFFER_SIZE: usize = 4 * 1024;
 
-#[tracing::instrument(level = "debug", err, ret, skip_all)]
-pub fn input(
+#[tracing::instrument(level = "debug", err, ret, skip_all, fields(ty = ty))]
+pub fn read(
+    ty: &'static str,
     mut input: impl Read,
     tx: mpsc::Sender<Arc<BytesMut>>,
     mut rx: mpsc::Receiver<Result<(), String>>,
@@ -46,8 +47,9 @@ pub fn input(
     Ok(())
 }
 
-#[tracing::instrument(level = "debug", err, ret, skip_all)]
-pub fn output(
+#[tracing::instrument(level = "debug", err, ret, skip_all, fields(ty = ty))]
+pub fn write(
+    ty: &'static str,
     mut output: impl Write,
     tx: mpsc::Sender<Result<(), String>>,
     mut rx: mpsc::Receiver<Arc<BytesMut>>,

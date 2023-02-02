@@ -2,7 +2,7 @@ use std::{io, process::ExitCode, sync::Arc, thread};
 
 use bytes::BytesMut;
 use color_eyre::eyre::{self, WrapErr as _};
-use futures::{future, stream, SinkExt as _, StreamExt as _, TryStreamExt};
+use futures::{future, stream, Sink, SinkExt as _, StreamExt as _, TryStream, TryStreamExt as _};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
@@ -24,26 +24,27 @@ pub async fn main(
     let stream = SocketStream::connect(connect_address)
         .await
         .wrap_err_with(|| format!("failed to connect socket: {connect_address}"))?;
+
     let (read_stream, write_stream) = stream.into_split();
 
-    let read_stream = FramedRead::new(read_stream, LengthDelimitedCodec::new());
-    let mut write_stream = FramedWrite::new(write_stream, LengthDelimitedCodec::new());
+    let bytes_rx = FramedRead::new(read_stream, LengthDelimitedCodec::new());
+    let mut bytes_tx = FramedWrite::new(write_stream, LengthDelimitedCodec::new());
 
-    protocol::new_sender(&mut write_stream)
+    protocol::new_sender(&mut bytes_tx)
         .send(SpawnMessage { command, args })
         .await
         .wrap_err("failed to send spawn request")?;
 
-    let receiver = protocol::new_receiver::<_, ServerMessage>(read_stream);
-    let mut sender = protocol::new_sender::<_, ClientMessage>(write_stream);
+    let server_rx = protocol::new_receiver::<_, ServerMessage>(bytes_rx);
+    let server_tx = protocol::new_sender::<_, ClientMessage>(bytes_tx);
 
     let (stdin_bytes_tx, stdin_bytes_rx) = mpsc::channel(1);
     let (stdin_res_tx, stdin_res_rx) = mpsc::channel(1);
     let _stdin_thread = thread::Builder::new()
         .name("stdin".into())
         .spawn(|| {
-            let _span = tracing::info_span!("stdin").entered();
-            crate::thread::input(io::stdin(), stdin_bytes_tx, stdin_res_rx)
+            crate::thread::read("stdin", io::stdin(), stdin_bytes_tx, stdin_res_rx)
+                .in_current_span()
         })
         .wrap_err("failed to spawn thread")?;
 
@@ -52,8 +53,8 @@ pub async fn main(
     let stdout_thread = thread::Builder::new()
         .name("stdout".into())
         .spawn(|| {
-            let _span = tracing::info_span!("stdout").entered();
-            crate::thread::output(io::stdout(), stdout_res_tx, stdout_bytes_rx)
+            crate::thread::write("stdout", io::stdout(), stdout_res_tx, stdout_bytes_rx)
+                .in_current_span()
         })
         .wrap_err("failed to spawn thread")?;
 
@@ -62,41 +63,21 @@ pub async fn main(
     let stderr_thread = thread::Builder::new()
         .name("stderr".into())
         .spawn(|| {
-            let _span = tracing::info_span!("stderr").entered();
-            crate::thread::output(io::stderr(), stderr_res_tx, stderr_bytes_rx)
+            crate::thread::write("stderr", io::stderr(), stderr_res_tx, stderr_bytes_rx)
+                .in_current_span()
         })
         .wrap_err("failed to spawn thread")?;
 
     let (exit_code_tx, exit_code_rx) = oneshot::channel();
-    tokio::spawn(receive(
-        receiver,
+    tokio::spawn(receive_server(
+        server_rx,
         exit_code_tx,
         stdin_res_tx,
         stdout_bytes_tx,
         stderr_bytes_tx,
     ));
     tokio::spawn(
-        async move {
-            let stdin = ReceiverStream::new(stdin_bytes_rx)
-                .map(OutputRequest::Output)
-                .chain(stream::once(future::ready(OutputRequest::Terminated)))
-                .map(ClientMessage::Stdin);
-            let stdout = ReceiverStream::new(stdout_res_rx)
-                .map(OutputResponse)
-                .map(ClientMessage::Stdout);
-            let stderr = ReceiverStream::new(stderr_res_rx)
-                .map(OutputResponse)
-                .map(ClientMessage::Stderr);
-            let mut stream = stream::select(stdin, stream::select(stdout, stderr));
-            while let Some(msg) = stream.next().await {
-                tracing::trace!("sending message: {msg:?}");
-                match sender.send(msg).await {
-                    Ok(()) => tracing::trace!("message sent"),
-                    Err(e) => tracing::error!("failed to send message: {e:?}"),
-                }
-            }
-        }
-        .instrument(tracing::info_span!("send")),
+        send_client(server_tx, stdin_bytes_rx, stdout_res_rx, stderr_res_rx).in_current_span(),
     );
 
     // Wait for output threads to complete to ensure that all outputs are flushed.
@@ -117,8 +98,8 @@ pub async fn main(
 }
 
 #[tracing::instrument(level = "debug", err, ret, skip_all)]
-async fn receive(
-    mut receiver: impl TryStreamExt<Ok = ServerMessage, Error = io::Error> + Unpin,
+async fn receive_server(
+    mut receiver: impl TryStream<Ok = ServerMessage, Error = io::Error> + Unpin,
     exit_code_tx: oneshot::Sender<Exit>,
     stdin_tx: mpsc::Sender<Result<(), String>>,
     stdout_tx: mpsc::Sender<Arc<BytesMut>>,
@@ -127,6 +108,7 @@ async fn receive(
     let mut exit_code_tx = Some(exit_code_tx);
     let mut stdout_tx = Some(stdout_tx);
     let mut stderr_tx = Some(stderr_tx);
+
     while let Some(msg) = receiver
         .try_next()
         .await
@@ -182,6 +164,36 @@ async fn receive(
                     let _ = stderr_tx.take();
                 }
             },
+        }
+    }
+
+    Ok(())
+}
+
+#[tracing::instrument(level = "debug", err, ret, skip_all)]
+async fn send_client(
+    mut server_tx: impl Sink<ClientMessage, Error = io::Error> + Send + Unpin + 'static,
+    stdin_bytes_rx: mpsc::Receiver<Arc<BytesMut>>,
+    stdout_res_rx: mpsc::Receiver<Result<(), String>>,
+    stderr_res_rx: mpsc::Receiver<Result<(), String>>,
+) -> eyre::Result<()> {
+    let stdin = ReceiverStream::new(stdin_bytes_rx)
+        .map(OutputRequest::Output)
+        .chain(stream::once(future::ready(OutputRequest::Terminated)))
+        .map(ClientMessage::Stdin);
+    let stdout = ReceiverStream::new(stdout_res_rx)
+        .map(OutputResponse)
+        .map(ClientMessage::Stdout);
+    let stderr = ReceiverStream::new(stderr_res_rx)
+        .map(OutputResponse)
+        .map(ClientMessage::Stderr);
+
+    let mut stream = stream::select(stdin, stream::select(stdout, stderr));
+    while let Some(msg) = stream.next().await {
+        tracing::trace!("sending message: {msg:?}");
+        match server_tx.send(msg).await {
+            Ok(()) => tracing::trace!("message sent"),
+            Err(e) => tracing::error!("failed to send message: {e:?}"),
         }
     }
 
