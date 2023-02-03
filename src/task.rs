@@ -1,4 +1,4 @@
-use std::{io, sync::Arc};
+use std::{io, mem, sync::Arc};
 
 use bytes::BytesMut;
 use color_eyre::eyre::{self, eyre, WrapErr as _};
@@ -18,6 +18,9 @@ pub async fn read(
 ) -> eyre::Result<()> {
     let mut bytes = BytesMut::new();
     bytes.resize(BUFFER_SIZE, 0);
+
+    let mut send_bytes = Arc::new(BytesMut::new());
+
     loop {
         match input.read(&mut bytes).await {
             Ok(0) => {
@@ -26,11 +29,16 @@ pub async fn read(
             }
             Ok(size) => {
                 tracing::trace!("{} bytes read", size);
-                let send_bytes = Arc::new(bytes.split_to(size));
+
+                let dummy_buf =
+                    mem::replace(Arc::get_mut(&mut send_bytes).unwrap(), bytes.split_to(size));
+                assert!(dummy_buf.is_empty());
+
                 tx.send(Arc::clone(&send_bytes))
                     .await
                     .wrap_err("failed to send bytes")?;
                 tracing::trace!("bytes sent");
+
                 rx.recv()
                     .await
                     .transpose()
@@ -38,8 +46,10 @@ pub async fn read(
                     .ok_or_else(|| eyre!("failed to receive buffer"))?;
                 tracing::trace!("ack received");
 
-                let send_bytes = Arc::try_unwrap(send_bytes).expect("must be un-shared");
-                bytes.unsplit(send_bytes);
+                bytes.unsplit(mem::replace(
+                    Arc::get_mut(&mut send_bytes).unwrap(),
+                    BytesMut::new(),
+                ));
                 assert_eq!(bytes.len(), BUFFER_SIZE);
             }
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,

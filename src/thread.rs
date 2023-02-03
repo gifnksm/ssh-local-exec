@@ -1,5 +1,6 @@
 use std::{
     io::{self, Read, Write},
+    mem,
     sync::Arc,
 };
 
@@ -18,6 +19,9 @@ pub fn read(
 ) -> eyre::Result<()> {
     let mut bytes = BytesMut::new();
     bytes.resize(BUFFER_SIZE, 0);
+
+    let mut send_bytes = Arc::new(BytesMut::new());
+
     loop {
         match input.read(&mut bytes) {
             Ok(0) => {
@@ -26,18 +30,25 @@ pub fn read(
             }
             Ok(size) => {
                 tracing::trace!("{} bytes read", size);
-                let send_bytes = Arc::new(bytes.split_to(size));
+
+                let dummy_buf =
+                    mem::replace(Arc::get_mut(&mut send_bytes).unwrap(), bytes.split_to(size));
+                assert!(dummy_buf.is_empty());
+
                 tx.blocking_send(Arc::clone(&send_bytes))
                     .wrap_err("failed to send bytes")?;
                 tracing::trace!("bytes sent");
+
                 rx.blocking_recv()
                     .transpose()
                     .map_err(|e| eyre!(e))?
                     .ok_or_else(|| eyre!("failed to receive buffer"))?;
                 tracing::trace!("ack received");
 
-                let send_bytes = Arc::try_unwrap(send_bytes).expect("must be un-shared");
-                bytes.unsplit(send_bytes);
+                bytes.unsplit(mem::replace(
+                    Arc::get_mut(&mut send_bytes).unwrap(),
+                    BytesMut::new(),
+                ));
                 assert_eq!(bytes.len(), BUFFER_SIZE);
             }
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
