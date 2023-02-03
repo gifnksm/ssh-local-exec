@@ -1,7 +1,7 @@
 use std::{io, os::unix::prelude::ExitStatusExt, process::Stdio, sync::Arc};
 
 use bytes::BytesMut;
-use color_eyre::eyre::{self, eyre, WrapErr as _};
+use color_eyre::eyre::{self, bail, eyre, WrapErr as _};
 use futures::{
     channel::oneshot, future, stream, Sink, SinkExt as _, StreamExt as _, TryStream,
     TryStreamExt as _,
@@ -54,8 +54,9 @@ async fn listen_client(listener: SocketListener, shutdown: Shutdown) -> eyre::Re
                         join_set.spawn(
                             async move {
                                 tracing::info!("accepted connection from {}", addr);
-                                if let Err(e) = handle_client_connection(stream).await {
-                                    tracing::error!("{e:?}");
+                                match handle_client_connection(stream).await {
+                                    Ok(()) => tracing::info!("client handler finished"),
+                                    Err(err) => tracing::error!("client handler aborted due to error: {err:?}")
                                 }
                             }
                             .instrument(tracing::info_span!("client", id = client_id)),
@@ -168,8 +169,7 @@ async fn handle_client_request(
     );
 
     while let Some(res) = join_set.join_next().await {
-        res.wrap_err("task join failure")
-            .and_then(|e| e.wrap_err("task failure"))?;
+        res.wrap_err("task join failure").and_then(|r| r)?;
     }
 
     tracing::debug!("all tasks finished");
@@ -179,27 +179,34 @@ async fn handle_client_request(
 
 #[tracing::instrument(level = "debug", err, ret, skip_all)]
 async fn wait_child(mut child: Child, exit_tx: oneshot::Sender<Exit>) -> eyre::Result<()> {
-    let exit = match child.wait().await {
-        Ok(status) => {
-            if let Some(code) = status.code() {
-                tracing::debug!("child process exited with code: {}", code);
-                Exit::Code(code)
-            } else if let Some(signal) = status.signal() {
-                tracing::debug!("child process exited with signal: {}", signal);
-                Exit::Signal(signal)
-            } else {
-                Exit::OtherError("child process exited with unknown status".into())
-            }
-        }
-        Err(e) => {
-            tracing::error!("child process exited with error: {e}", e = e);
-            Exit::OtherError(e.to_string())
-        }
+    // If waiting for the child process failed, some unexpected system error may have occurred.
+    // In this case, all related server tasks should be aborted.
+    // To abort all tasks, return an error here.
+    let exit_status = child
+        .wait()
+        .await
+        .wrap_err("failed to wait child process")?;
+
+    let exit = if let Some(code) = exit_status.code() {
+        tracing::debug!("child process exited with code: {}", code);
+        Exit::Code(code)
+    } else if let Some(signal) = exit_status.signal() {
+        tracing::debug!("child process exited with signal: {}", signal);
+        Exit::Signal(signal)
+    } else {
+        // As wait() failure, this error is unexpected.
+        bail!("child process exited with unknown status");
     };
 
-    exit_tx
+    if let Err(err) = exit_tx
         .send(exit)
-        .map_err(|_| eyre!("failed to notify exit status"))?;
+        .map_err(|_| eyre!("failed to send message to exit_tx"))
+    {
+        // The only reason for failure in sending a message to another task is that the task has already been terminated.
+        // In this case, the program has already started to abort, so it simply terminates without generating any errors in this task.
+        tracing::debug!("{err}");
+        return Ok(());
+    }
 
     Ok(())
 }
@@ -213,42 +220,48 @@ async fn receive_client(
 ) -> eyre::Result<()> {
     let mut stdin_tx = Some(stdin_tx);
 
+    // If receiving messages from the client failed, there may have been a problem with the connection to the client.
+    // In this case, all related server tasks should be aborted.
+    // To abort all tasks, return an error here.
     while let Some(msg) = client_rx
         .try_next()
         .await
-        .wrap_err("failed to receive message")?
+        .wrap_err("failed to receive message from client")?
     {
         tracing::trace!("received message: {:?}", msg);
-        match msg {
+
+        let res = match msg {
             ClientMessage::Stdin(msg) => match msg {
-                OutputRequest::Output(msg) => {
-                    stdin_tx
-                        .as_mut()
-                        .unwrap()
-                        .send(msg)
-                        .await
-                        .wrap_err("failed to send message")?;
-                }
+                OutputRequest::Output(msg) => stdin_tx
+                    .as_mut()
+                    .unwrap()
+                    .send(msg)
+                    .await
+                    .map_err(|_| eyre!("failed to send message to stdin task")),
                 OutputRequest::Terminated => {
                     let _ = stdin_tx.take();
+                    Ok(())
                 }
             },
             ClientMessage::Stdout(msg) => match msg {
-                OutputResponse(msg) => {
-                    stdout_tx
-                        .send(msg)
-                        .await
-                        .wrap_err("failed to send message")?;
-                }
+                OutputResponse(msg) => stdout_tx
+                    .send(msg)
+                    .await
+                    .map_err(|_| eyre!("failed to send message to stdout task")),
             },
             ClientMessage::Stderr(msg) => match msg {
-                OutputResponse(msg) => {
-                    stderr_tx
-                        .send(msg)
-                        .await
-                        .wrap_err("failed to send message")?;
-                }
+                OutputResponse(msg) => stderr_tx
+                    .send(msg)
+                    .await
+                    .map_err(|_| eyre!("failed to send message to stderr task")),
             },
+        };
+
+        if let Err(err) = res {
+            // The only reason for failure in sending a message to another task is that the task has already been terminated.
+            // In this case, the program has already started to abort, so it simply terminates without generating any errors in this task.
+            tracing::debug!("{err}");
+            break;
         }
     }
 
@@ -263,24 +276,43 @@ async fn send_client(
     stdout_bytes_rx: mpsc::Receiver<Arc<BytesMut>>,
     stderr_bytes_rx: mpsc::Receiver<Arc<BytesMut>>,
 ) -> eyre::Result<()> {
-    let exit = stream::once(exit_rx).map(|res| res.map(ServerMessage::Exit).unwrap());
+    let exit = stream::once(exit_rx).map(|res| res.map(ServerMessage::Exit));
     let stdin = ReceiverStream::new(stdin_res_rx)
         .map(OutputResponse)
-        .map(ServerMessage::Stdin);
+        .map(ServerMessage::Stdin)
+        .map(Ok);
     let stdout = ReceiverStream::new(stdout_bytes_rx)
         .map(OutputRequest::Output)
         .chain(stream::once(future::ready(OutputRequest::Terminated)))
-        .map(ServerMessage::Stdout);
+        .map(ServerMessage::Stdout)
+        .map(Ok);
     let stderr = ReceiverStream::new(stderr_bytes_rx)
         .map(OutputRequest::Output)
         .chain(stream::once(future::ready(OutputRequest::Terminated)))
-        .map(ServerMessage::Stderr);
+        .map(ServerMessage::Stderr)
+        .map(Ok);
 
     let mut stream = stream::select(exit, stream::select(stdin, stream::select(stdout, stderr)));
     while let Some(msg) = stream.next().await {
+        let msg = match msg {
+            Ok(msg) => msg,
+            Err(err) => {
+                // The only reason for failure in receiving a message from another task is that the task has already been terminated.
+                // In this case, the program has already started to abort, so it simply terminates without generating any errors in this task.
+                tracing::debug!("{err}");
+                break;
+            }
+        };
+
         tracing::trace!("sending message: {msg:?}");
-        client_tx.send(msg).await?;
-        tracing::trace!("message sent");
+        // If sending message to the client failed, there may have been a problem with the connection to the client.
+        // In this case, all related server tasks should be aborted.
+        // To abort all tasks, return an error here.
+        client_tx
+            .send(msg)
+            .await
+            .wrap_err("failed to send message to client")?;
+        tracing::trace!("message sent to server");
     }
 
     Ok(())
