@@ -9,6 +9,7 @@ use futures::{
 use tokio::{
     process::{self, Child},
     sync::mpsc,
+    task::JoinSet,
 };
 use tokio_shutdown::Shutdown;
 use tokio_stream::wrappers::ReceiverStream;
@@ -41,6 +42,7 @@ pub async fn main(listen_address: &ListenAddress) -> eyre::Result<()> {
 }
 
 async fn listen_client(listener: SocketListener, shutdown: Shutdown) -> eyre::Result<()> {
+    let mut join_set = JoinSet::new();
     for client_id in 0.. {
         tokio::select! {
             _ = shutdown.handle() => {
@@ -49,7 +51,7 @@ async fn listen_client(listener: SocketListener, shutdown: Shutdown) -> eyre::Re
             res = listener.accept() => {
                 match res {
                     Ok((stream, addr)) => {
-                        tokio::spawn(
+                        join_set.spawn(
                             async move {
                                 tracing::info!("accepted connection from {}", addr);
                                 if let Err(e) = handle_client_connection(stream).await {
@@ -128,32 +130,33 @@ async fn handle_client_request(
 
     tracing::debug!("spawned child process: {:?}", child.id());
 
+    let mut join_set = JoinSet::new();
+
     let (exit_tx, exit_rx) = oneshot::channel();
-    tokio::spawn(wait_child(child, exit_tx).in_current_span());
+    join_set.spawn(wait_child(child, exit_tx).in_current_span());
 
     let (stdin_bytes_tx, stdin_bytes_rx) = mpsc::channel(1);
     let (stdin_res_tx, stdin_res_rx) = mpsc::channel(1);
-    tokio::spawn(
-        crate::task::write("stdin", stdin, stdin_res_tx, stdin_bytes_rx).in_current_span(),
-    );
+    join_set
+        .spawn(crate::task::write("stdin", stdin, stdin_res_tx, stdin_bytes_rx).in_current_span());
 
     let (stdout_bytes_tx, stdout_bytes_rx) = mpsc::channel(1);
     let (stdout_res_tx, stdout_res_rx) = mpsc::channel(1);
-    tokio::spawn(
+    join_set.spawn(
         crate::task::read("stdout", stdout, stdout_bytes_tx, stdout_res_rx).in_current_span(),
     );
 
     let (stderr_bytes_tx, stderr_bytes_rx) = mpsc::channel(1);
     let (stderr_res_tx, stderr_res_rx) = mpsc::channel(1);
-    tokio::spawn(
+    join_set.spawn(
         crate::task::read("stderr", stderr, stderr_bytes_tx, stderr_res_rx).in_current_span(),
     );
 
-    tokio::spawn(
+    join_set.spawn(
         receive_client(client_rx, stdin_bytes_tx, stdout_res_tx, stderr_res_tx).in_current_span(),
     );
 
-    tokio::spawn(
+    join_set.spawn(
         send_client(
             client_tx,
             exit_rx,
@@ -163,6 +166,13 @@ async fn handle_client_request(
         )
         .in_current_span(),
     );
+
+    while let Some(res) = join_set.join_next().await {
+        res.wrap_err("task join failure")
+            .and_then(|e| e.wrap_err("task failure"))?;
+    }
+
+    tracing::debug!("all tasks finished");
 
     Ok(())
 }
@@ -187,7 +197,9 @@ async fn wait_child(mut child: Child, exit_tx: oneshot::Sender<Exit>) -> eyre::R
         }
     };
 
-    exit_tx.send(exit).unwrap();
+    exit_tx
+        .send(exit)
+        .map_err(|_| eyre!("failed to notify exit status"))?;
 
     Ok(())
 }
@@ -267,10 +279,8 @@ async fn send_client(
     let mut stream = stream::select(exit, stream::select(stdin, stream::select(stdout, stderr)));
     while let Some(msg) = stream.next().await {
         tracing::trace!("sending message: {msg:?}");
-        match client_tx.send(msg).await {
-            Ok(()) => tracing::trace!("message sent"),
-            Err(e) => tracing::error!("failed to send message: {e:?}"),
-        }
+        client_tx.send(msg).await?;
+        tracing::trace!("message sent");
     }
 
     Ok(())
