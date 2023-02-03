@@ -22,40 +22,62 @@ pub async fn read(
     let mut send_bytes = Arc::new(BytesMut::new());
 
     loop {
-        match input.read(&mut bytes).await {
+        let read_size = match input.read(&mut bytes).await {
             Ok(0) => {
                 tracing::trace!("terminated");
                 break;
             }
-            Ok(size) => {
-                tracing::trace!("{} bytes read", size);
+            Ok(size) => size,
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            // If reading from input failed, some unexpected system error may have occurred.
+            // In this case, all related server tasks should be aborted.
+            // To abort all tasks, return an error here.
+            Err(err) => return Err(eyre!(err)).wrap_err("failed to read {ty}"),
+        };
 
-                let dummy_buf =
-                    mem::replace(Arc::get_mut(&mut send_bytes).unwrap(), bytes.split_to(size));
-                assert!(dummy_buf.is_empty());
+        tracing::trace!("{} bytes read", read_size);
 
-                tx.send(Arc::clone(&send_bytes))
-                    .await
-                    .wrap_err("failed to send bytes")?;
-                tracing::trace!("bytes sent");
+        let dummy_buf = mem::replace(
+            Arc::get_mut(&mut send_bytes).unwrap(),
+            bytes.split_to(read_size),
+        );
+        assert!(dummy_buf.is_empty());
 
-                rx.recv()
-                    .await
-                    .transpose()
-                    .map_err(|e| eyre!(e))?
-                    .ok_or_else(|| eyre!("failed to receive buffer"))?;
-                tracing::trace!("ack received");
-
-                bytes.unsplit(mem::replace(
-                    Arc::get_mut(&mut send_bytes).unwrap(),
-                    BytesMut::new(),
-                ));
-                assert_eq!(bytes.len(), BUFFER_SIZE);
-            }
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-            Err(e) => return Err(eyre!(e).wrap_err("failed to read stdin")),
+        // The only reason for failure in sending a message to another task is that the task has already been terminated.
+        // In this case, the program has already started to abort, so it simply terminates without generating any errors in this task.
+        if let Err(err) = tx
+            .send(Arc::clone(&send_bytes))
+            .await
+            .wrap_err("failed to send bytes")
+        {
+            tracing::debug!("{err}");
+            break;
         }
+        tracing::trace!("bytes sent");
+
+        match rx.recv().await {
+            Some(Ok(())) => tracing::trace!("ack received"),
+            Some(Err(err)) => {
+                // If output end returned an error, some unexpected system error may have occurred.
+                // In this case, all related server tasks should be aborted.
+                // To abort all tasks, return an error here.
+                return Err(eyre!(err)).wrap_err_with(|| format!("failed to write {ty}"));
+            }
+            None => {
+                // The only reason for channel to be closed is that the another task has already been terminated.
+                // In this case, the program has already started to abort, so it simply terminates without generating any errors in this task.
+                tracing::debug!("failed to receive ack");
+                break;
+            }
+        }
+
+        bytes.unsplit(mem::replace(
+            Arc::get_mut(&mut send_bytes).unwrap(),
+            BytesMut::new(),
+        ));
+        assert_eq!(bytes.len(), BUFFER_SIZE);
     }
+
     Ok(())
 }
 
@@ -68,19 +90,31 @@ pub async fn write(
 ) -> eyre::Result<()> {
     while let Some(bytes) = rx.recv().await {
         tracing::trace!("{} bytes received", bytes.len());
-        let res = output.write_all(&bytes).await;
-        let res = match &res {
-            Ok(()) => {
-                tracing::trace!("bytes written");
-                Ok(())
-            }
-            Err(e) => {
-                tracing::error!("failed to write bytes: {}", e);
-                Err(e.to_string())
+
+        let res = loop {
+            match output.write_all(&bytes).await {
+                Ok(()) => {
+                    tracing::trace!("bytes written");
+                    break Ok(());
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                // In this case, send an error response to the input end.
+                // Input end will trigger the abortion of all related server tasks.
+                Err(err) => {
+                    tracing::error!("failed to write bytes: {err}");
+                    break Err(err.to_string());
+                }
             }
         };
-        tx.send(res).await.wrap_err("failed to send result")?;
-        tracing::trace!("result sent")
+
+        if let Err(err) = tx.send(res).await {
+            // The only reason for failure in sending a message to another task is that the task has already been terminated.
+            // In this case, the program has already started to abort, so it simply terminates without generating any errors in this task.
+            tracing::debug!("{err}");
+            break;
+        }
+        tracing::trace!("result sent");
     }
+
     Ok(())
 }
