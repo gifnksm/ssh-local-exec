@@ -1,6 +1,6 @@
 use std::{
     io::{self, Read, Write},
-    mem,
+    mem, ptr,
     sync::{Arc, Mutex},
 };
 
@@ -77,11 +77,13 @@ pub fn read(
             }
         }
 
-        bytes.unsplit(mem::replace(
-            Arc::get_mut(&mut send_bytes).unwrap(),
-            BytesMut::new(),
-        ));
+        let unsend_bytes = bytes;
+        bytes = mem::replace(Arc::get_mut(&mut send_bytes).unwrap(), BytesMut::new());
+        let bytes_ptr = bytes.as_ptr();
+        bytes.unsplit(unsend_bytes);
         assert_eq!(bytes.len(), BUFFER_SIZE);
+        // ensure that the pointer is not changed (allocation is not performed)
+        assert!(ptr::eq(bytes.as_ptr(), bytes_ptr));
     }
 
     let _ = tx.lock().unwrap().take();
