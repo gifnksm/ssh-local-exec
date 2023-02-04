@@ -134,7 +134,8 @@ async fn handle_client_request(
     let mut join_set = JoinSet::new();
 
     let (exit_tx, exit_rx) = oneshot::channel();
-    join_set.spawn(wait_child(child, exit_tx).in_current_span());
+    let (kill_tx, kill_rx) = oneshot::channel();
+    join_set.spawn(wait_child(child, exit_tx, kill_rx).in_current_span());
 
     let (stdin_bytes_tx, stdin_bytes_rx) = mpsc::channel(1);
     let (stdin_res_tx, stdin_res_rx) = mpsc::channel(1);
@@ -154,7 +155,14 @@ async fn handle_client_request(
     );
 
     join_set.spawn(
-        receive_client(client_rx, stdin_bytes_tx, stdout_res_tx, stderr_res_tx).in_current_span(),
+        receive_client(
+            client_rx,
+            kill_tx,
+            stdin_bytes_tx,
+            stdout_res_tx,
+            stderr_res_tx,
+        )
+        .in_current_span(),
     );
 
     join_set.spawn(
@@ -178,14 +186,22 @@ async fn handle_client_request(
 }
 
 #[tracing::instrument(level = "debug", err, ret, skip_all)]
-async fn wait_child(mut child: Child, exit_tx: oneshot::Sender<Exit>) -> eyre::Result<()> {
+async fn wait_child(
+    mut child: Child,
+    exit_tx: oneshot::Sender<Exit>,
+    kill_rx: oneshot::Receiver<()>,
+) -> eyre::Result<()> {
     // If waiting for the child process failed, some unexpected system error may have occurred.
     // In this case, all related server tasks should be aborted.
     // To abort all tasks, return an error here.
-    let exit_status = child
-        .wait()
-        .await
-        .wrap_err("failed to wait child process")?;
+    let exit_status = tokio::select! {
+        status = child.wait() => status.wrap_err("failed to wait child process")?,
+        _ = kill_rx => {
+            tracing::debug!("received kill signal");
+            child.start_kill().wrap_err("failed to kill child process")?;
+            child.wait().await.wrap_err("failed to wait child process")?
+        }
+    };
 
     let exit = if let Some(code) = exit_status.code() {
         tracing::debug!("child process exited with code: {}", code);
@@ -214,6 +230,7 @@ async fn wait_child(mut child: Child, exit_tx: oneshot::Sender<Exit>) -> eyre::R
 #[tracing::instrument(level = "debug", err, ret, skip_all)]
 async fn receive_client(
     mut client_rx: impl TryStream<Ok = ClientMessage, Error = io::Error> + Unpin,
+    kill_tx: oneshot::Sender<()>,
     stdin_tx: mpsc::Sender<Arc<BytesMut>>,
     stdout_tx: mpsc::Sender<Result<(), String>>,
     stderr_tx: mpsc::Sender<Result<(), String>>,
@@ -263,6 +280,11 @@ async fn receive_client(
             tracing::debug!("{err}");
             break;
         }
+    }
+
+    if let Ok(()) = kill_tx.send(()) {
+        // If the process has already been terminated, the message will fail to be sent and will not be logged even if an error occurs.
+        tracing::debug!("sent kill signal, maybe client disconnected unexpectedly");
     }
 
     Ok(())
