@@ -258,6 +258,14 @@ async fn receive_server(
         }
     }
 
+    if let Some(exit_code_tx) = exit_code_tx {
+        let _ = stdin_bytes_tx.lock().unwrap().take();
+        exit_tx.send_modify(|_| ());
+        exit_code_tx
+            .send(Exit::OtherError("server terminated".to_string()))
+            .map_err(|_| eyre!("failed to send message to exit_tx"))?;
+    }
+
     Ok(())
 }
 
