@@ -9,7 +9,8 @@ use bytes::BytesMut;
 use color_eyre::eyre::{self, eyre, WrapErr as _};
 use futures::{future, stream, Sink, SinkExt as _, StreamExt as _, TryStream, TryStreamExt as _};
 use tokio::{
-    sync::{mpsc, oneshot},
+    signal::unix::{signal, SignalKind},
+    sync::{mpsc, oneshot, watch},
     task::JoinSet,
 };
 use tokio_stream::wrappers::ReceiverStream;
@@ -19,7 +20,8 @@ use tracing::Instrument;
 use crate::{
     args::ConnectAddress,
     protocol::{
-        self, ClientMessage, Exit, OutputRequest, OutputResponse, ServerMessage, SpawnMessage,
+        self, ClientMessage, Exit, OutputRequest, OutputResponse, ServerMessage, Signal,
+        SpawnMessage,
     },
     socket::SocketStream,
 };
@@ -82,17 +84,30 @@ pub async fn main(
         })
         .wrap_err("failed to spawn thread")?;
 
+    let (exit_tx, exit_rx) = watch::channel(());
+
+    let (signal_tx, signal_rx) = mpsc::channel(1);
+    join_set.spawn(handle_signal(exit_rx, signal_tx).in_current_span());
+
     let (exit_code_tx, exit_code_rx) = oneshot::channel();
     join_set.spawn(receive_server(
         server_rx,
         exit_code_tx,
+        exit_tx,
         stdin_bytes_tx,
         stdin_res_tx,
         stdout_bytes_tx,
         stderr_bytes_tx,
     ));
     join_set.spawn(
-        send_client(server_tx, stdin_bytes_rx, stdout_res_rx, stderr_res_rx).in_current_span(),
+        send_client(
+            server_tx,
+            signal_rx,
+            stdin_bytes_rx,
+            stdout_res_rx,
+            stderr_res_rx,
+        )
+        .in_current_span(),
     );
 
     // Wait for output threads to complete to ensure that all outputs are flushed.
@@ -117,9 +132,54 @@ pub async fn main(
 }
 
 #[tracing::instrument(level = "debug", err, ret, skip_all)]
+async fn handle_signal(
+    mut exit: watch::Receiver<()>,
+    tx: mpsc::Sender<Signal>,
+) -> eyre::Result<()> {
+    let mut alarm = signal(SignalKind::alarm())?;
+    let mut child = signal(SignalKind::child())?;
+    let mut hangup = signal(SignalKind::hangup())?;
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    let mut io = signal(SignalKind::io())?;
+    let mut pipe = signal(SignalKind::pipe())?;
+    let mut quit = signal(SignalKind::quit())?;
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut user_defined1 = signal(SignalKind::user_defined1())?;
+    let mut user_defined2 = signal(SignalKind::user_defined2())?;
+    let mut window_change = signal(SignalKind::window_change())?;
+
+    loop {
+        let msg = tokio::select! {
+            _ = exit.changed() => break,
+            _ = alarm.recv() => Signal::Alarm,
+            _ = child.recv() => Signal::Child,
+            _ = hangup.recv() => Signal::Hangup,
+            _ = interrupt.recv() => Signal::Interrupt,
+            _ = io.recv() => Signal::Io,
+            _ = pipe.recv() => Signal::Pipe,
+            _ = quit.recv() => Signal::Quit,
+            _ = terminate.recv() => Signal::Terminate,
+            _ = user_defined1.recv() => Signal::UserDefined1,
+            _ = user_defined2.recv() => Signal::UserDefined2,
+            _ = window_change.recv() => Signal::WindowChange,
+        };
+
+        // The only reason for failure in sending a message to another task is that the task has already been terminated.
+        // In this case, the program has already started to abort, so it simply terminates without generating any errors in this task.
+        if let Err(err) = tx.send(msg).await.wrap_err("failed to send signal") {
+            tracing::debug!("{err}");
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+#[tracing::instrument(level = "debug", err, ret, skip_all)]
 async fn receive_server(
     mut receiver: impl TryStream<Ok = ServerMessage, Error = io::Error> + Unpin,
     exit_code_tx: oneshot::Sender<Exit>,
+    exit_tx: watch::Sender<()>,
     stdin_bytes_tx: Arc<Mutex<Option<mpsc::Sender<Arc<BytesMut>>>>>,
     stdin_tx: mpsc::Sender<Result<(), String>>,
     stdout_tx: mpsc::Sender<Arc<BytesMut>>,
@@ -140,6 +200,7 @@ async fn receive_server(
                 // close stdin task output channel if not cloed.
                 // this signals the sender thread to stdin thread exit
                 let _ = stdin_bytes_tx.lock().unwrap().take();
+                exit_tx.send_modify(|_| ());
                 match &exit {
                     Exit::Code(code) => {
                         tracing::info!("command exited with code: {}", code);
@@ -203,10 +264,12 @@ async fn receive_server(
 #[tracing::instrument(level = "debug", err, ret, skip_all)]
 async fn send_client(
     mut server_tx: impl Sink<ClientMessage, Error = io::Error> + Send + Unpin + 'static,
+    signal_rx: mpsc::Receiver<Signal>,
     stdin_bytes_rx: mpsc::Receiver<Arc<BytesMut>>,
     stdout_res_rx: mpsc::Receiver<Result<(), String>>,
     stderr_res_rx: mpsc::Receiver<Result<(), String>>,
 ) -> eyre::Result<()> {
+    let signal = ReceiverStream::new(signal_rx).map(ClientMessage::Signal);
     let stdin = ReceiverStream::new(stdin_bytes_rx)
         .map(OutputRequest::Output)
         .chain(stream::once(future::ready(OutputRequest::Terminated)))
@@ -218,7 +281,10 @@ async fn send_client(
         .map(OutputResponse)
         .map(ClientMessage::Stderr);
 
-    let mut stream = stream::select(stdin, stream::select(stdout, stderr));
+    let mut stream = stream::select(
+        signal,
+        stream::select(stdin, stream::select(stdout, stderr)),
+    );
     while let Some(msg) = stream.next().await {
         tracing::trace!("sending message: {msg:?}");
         // If sending message to the client failed, there may have been a problem with the connection to the client.
