@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::BytesMut;
-use color_eyre::eyre::{self, eyre, WrapErr as _};
+use color_eyre::eyre::{self, bail, eyre, WrapErr as _};
 use futures::{future, stream, Sink, SinkExt as _, StreamExt as _, TryStream, TryStreamExt as _};
 use tokio::{
     signal::unix::{signal, SignalKind},
@@ -185,7 +185,9 @@ async fn receive_server(
     stdout_tx: mpsc::Sender<Arc<BytesMut>>,
     stderr_tx: mpsc::Sender<Arc<BytesMut>>,
 ) -> eyre::Result<()> {
+    let mut shutdown = false;
     let mut exit_code_tx = Some(exit_code_tx);
+    let mut stdin_tx = Some(stdin_tx);
     let mut stdout_tx = Some(stdout_tx);
     let mut stderr_tx = Some(stderr_tx);
 
@@ -219,10 +221,17 @@ async fn receive_server(
                     .map_err(|_| eyre!("failed to send message to exit_tx"))
             }
             ServerMessage::Stdin(msg) => match msg {
-                OutputResponse(msg) => stdin_tx
+                OutputResponse::Output(msg) => stdin_tx
+                    .as_mut()
+                    .unwrap()
                     .send(msg)
                     .await
                     .wrap_err("failed to send message to stdin task"),
+                OutputResponse::Terminated => {
+                    tracing::debug!("server and client stdin tasks terminated");
+                    let _ = stdin_tx.take();
+                    Ok(())
+                }
             },
             ServerMessage::Stdout(msg) => match msg {
                 OutputRequest::Output(msg) => stdout_tx
@@ -232,6 +241,7 @@ async fn receive_server(
                     .await
                     .wrap_err("failed to send message to stdout task"),
                 OutputRequest::Terminated => {
+                    tracing::debug!("server stdout task terminated");
                     let _ = stdout_tx.take();
                     Ok(())
                 }
@@ -244,10 +254,16 @@ async fn receive_server(
                     .await
                     .wrap_err("failed to send message to sederr task"),
                 OutputRequest::Terminated => {
+                    tracing::debug!("server stderr task terminated");
                     let _ = stderr_tx.take();
                     Ok(())
                 }
             },
+            ServerMessage::Shutdown => {
+                tracing::debug!("server send task shutdown");
+                shutdown = true;
+                break;
+            }
         };
 
         if let Err(err) = res {
@@ -258,12 +274,8 @@ async fn receive_server(
         }
     }
 
-    if let Some(exit_code_tx) = exit_code_tx {
-        let _ = stdin_bytes_tx.lock().unwrap().take();
-        exit_tx.send_modify(|_| ());
-        exit_code_tx
-            .send(Exit::OtherError("server terminated".to_string()))
-            .map_err(|_| eyre!("failed to send message to exit_tx"))?;
+    if !shutdown {
+        bail!("server terminated unexpectedly");
     }
 
     Ok(())
@@ -283,16 +295,19 @@ async fn send_client(
         .chain(stream::once(future::ready(OutputRequest::Terminated)))
         .map(ClientMessage::Stdin);
     let stdout = ReceiverStream::new(stdout_res_rx)
-        .map(OutputResponse)
+        .map(OutputResponse::Output)
+        .chain(stream::once(future::ready(OutputResponse::Terminated)))
         .map(ClientMessage::Stdout);
     let stderr = ReceiverStream::new(stderr_res_rx)
-        .map(OutputResponse)
+        .map(OutputResponse::Output)
+        .chain(stream::once(future::ready(OutputResponse::Terminated)))
         .map(ClientMessage::Stderr);
 
     let mut stream = stream::select(
         signal,
         stream::select(stdin, stream::select(stdout, stderr)),
-    );
+    )
+    .chain(stream::once(future::ready(ClientMessage::Shutdown)));
     while let Some(msg) = stream.next().await {
         tracing::trace!("sending message: {msg:?}");
         // If sending message to the client failed, there may have been a problem with the connection to the client.

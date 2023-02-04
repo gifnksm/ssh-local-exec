@@ -66,7 +66,10 @@ pub enum Exit {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 
-pub struct OutputResponse(pub Result<(), String>);
+pub enum OutputResponse {
+    Output(Result<(), String>),
+    Terminated,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OutputRequest {
@@ -80,6 +83,7 @@ pub enum ServerMessage {
     Stdin(OutputResponse),
     Stdout(OutputRequest),
     Stderr(OutputRequest),
+    Shutdown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,4 +92,5 @@ pub enum ClientMessage {
     Stdin(OutputRequest),
     Stdout(OutputResponse),
     Stderr(OutputResponse),
+    Shutdown,
 }

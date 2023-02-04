@@ -244,7 +244,10 @@ async fn receive_client(
     stdout_tx: mpsc::Sender<Result<(), String>>,
     stderr_tx: mpsc::Sender<Result<(), String>>,
 ) -> eyre::Result<()> {
+    let mut shutdown = false;
     let mut stdin_tx = Some(stdin_tx);
+    let mut stdout_tx = Some(stdout_tx);
+    let mut stderr_tx = Some(stderr_tx);
 
     // If receiving messages from the client failed, there may have been a problem with the connection to the client.
     // In this case, all related server tasks should be aborted.
@@ -269,22 +272,42 @@ async fn receive_client(
                     Ok(())
                 }
                 OutputRequest::Terminated => {
+                    tracing::debug!("client stdin task terminated");
                     let _ = stdin_tx.take();
                     Ok(())
                 }
             },
             ClientMessage::Stdout(msg) => match msg {
-                OutputResponse(msg) => stdout_tx
+                OutputResponse::Output(msg) => stdout_tx
+                    .as_mut()
+                    .unwrap()
                     .send(msg)
                     .await
                     .map_err(|_| eyre!("failed to send message to stdout task")),
+                OutputResponse::Terminated => {
+                    tracing::debug!("server and client stdout tasks terminated");
+                    let _ = stdout_tx.take();
+                    Ok(())
+                }
             },
             ClientMessage::Stderr(msg) => match msg {
-                OutputResponse(msg) => stderr_tx
+                OutputResponse::Output(msg) => stderr_tx
+                    .as_mut()
+                    .unwrap()
                     .send(msg)
                     .await
                     .map_err(|_| eyre!("failed to send message to stderr task")),
+                OutputResponse::Terminated => {
+                    tracing::debug!("server and client stderr tasks terminated");
+                    let _ = stderr_tx.take();
+                    Ok(())
+                }
             },
+            ClientMessage::Shutdown => {
+                tracing::debug!("client send task shutdown");
+                shutdown = true;
+                break;
+            }
         };
 
         if let Err(err) = res {
@@ -300,6 +323,10 @@ async fn receive_client(
         tracing::debug!("sent kill signal, maybe client disconnected unexpectedly");
     }
 
+    if !shutdown {
+        bail!("client disconnected unexpectedly");
+    }
+
     Ok(())
 }
 
@@ -313,7 +340,8 @@ async fn send_client(
 ) -> eyre::Result<()> {
     let exit = stream::once(exit_rx).map(|res| res.map(ServerMessage::Exit));
     let stdin = ReceiverStream::new(stdin_res_rx)
-        .map(OutputResponse)
+        .map(OutputResponse::Output)
+        .chain(stream::once(future::ready(OutputResponse::Terminated)))
         .map(ServerMessage::Stdin)
         .map(Ok);
     let stdout = ReceiverStream::new(stdout_bytes_rx)
@@ -327,7 +355,8 @@ async fn send_client(
         .map(ServerMessage::Stderr)
         .map(Ok);
 
-    let mut stream = stream::select(exit, stream::select(stdin, stream::select(stdout, stderr)));
+    let mut stream = stream::select(exit, stream::select(stdin, stream::select(stdout, stderr)))
+        .chain(stream::once(future::ready(Ok(ServerMessage::Shutdown))));
     while let Some(msg) = stream.next().await {
         let msg = match msg {
             Ok(msg) => msg,
