@@ -12,10 +12,14 @@ const BUFFER_SIZE: usize = 4 * 1024;
 #[tracing::instrument(level = "debug", err, ret, skip_all, fields(ty = ty))]
 pub async fn read(
     ty: &'static str,
-    mut input: impl AsyncRead + Unpin,
+    input: Option<impl AsyncRead + Unpin>,
     tx: mpsc::Sender<Arc<BytesMut>>,
     mut rx: mpsc::Receiver<Result<(), String>>,
 ) -> eyre::Result<()> {
+    let Some(mut input) = input else {
+        return Ok(());
+    };
+
     let mut bytes = BytesMut::new();
     bytes.resize(BUFFER_SIZE, 0);
 
@@ -86,26 +90,32 @@ pub async fn read(
 #[tracing::instrument(level = "debug", err, ret, skip_all, fields(ty = ty))]
 pub async fn write(
     ty: &'static str,
-    mut output: impl AsyncWrite + Unpin,
+    mut output: Option<impl AsyncWrite + Unpin>,
     tx: mpsc::Sender<Result<(), String>>,
     mut rx: mpsc::Receiver<Arc<BytesMut>>,
 ) -> eyre::Result<()> {
     while let Some(bytes) = rx.recv().await {
         tracing::trace!("{} bytes received", bytes.len());
 
-        let res = loop {
-            match output.write_all(&bytes).await {
-                Ok(()) => {
-                    tracing::trace!("bytes written");
-                    break Ok(());
+        let res = match &mut output {
+            Some(output) => loop {
+                match output.write_all(&bytes).await {
+                    Ok(()) => {
+                        tracing::trace!("bytes written");
+                        break Ok(());
+                    }
+                    Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                    // In this case, send an error response to the input end.
+                    // Input end will trigger the abortion of all related server tasks.
+                    Err(err) => {
+                        tracing::error!("failed to write bytes: {err}");
+                        break Err(err.to_string());
+                    }
                 }
-                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
-                // In this case, send an error response to the input end.
-                // Input end will trigger the abortion of all related server tasks.
-                Err(err) => {
-                    tracing::error!("failed to write bytes: {err}");
-                    break Err(err.to_string());
-                }
+            },
+            None => {
+                tracing::trace!("bytes discarded");
+                Ok(())
             }
         };
 
