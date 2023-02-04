@@ -203,10 +203,10 @@ async fn receive_server(
                 exit_tx.send_modify(|_| ());
                 match &exit {
                     Exit::Code(code) => {
-                        tracing::info!("command exited with code: {}", code);
+                        tracing::debug!("command exited with code: {}", code);
                     }
                     Exit::Signal(signal) => {
-                        tracing::info!("command exited with signal: {}", signal);
+                        tracing::debug!("command exited with signal: {}", signal);
                     }
                     Exit::OtherError(ref error) => {
                         tracing::error!("command exited with error: {}", error);
