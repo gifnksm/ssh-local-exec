@@ -18,7 +18,8 @@ use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use crate::{
     args::ListenAddress,
     protocol::{
-        self, ClientMessage, Exit, OutputRequest, OutputResponse, ServerMessage, SpawnMessage,
+        self, ClientMessage, Exit, OutputRequest, OutputResponse, ServerMessage, Signal,
+        SpawnMessage,
     },
     socket::{SocketListener, SocketStream},
 };
@@ -43,29 +44,33 @@ pub async fn main(listen_address: &ListenAddress) -> eyre::Result<()> {
 
 async fn listen_client(listener: SocketListener, shutdown: Shutdown) -> eyre::Result<()> {
     let mut join_set = JoinSet::new();
+
     for client_id in 0.. {
-        tokio::select! {
-            _ = shutdown.handle() => {
-                break
-            },
-            res = listener.accept() => {
-                match res {
-                    Ok((stream, addr)) => {
-                        join_set.spawn(
-                            async move {
-                                tracing::info!("accepted connection from {}", addr);
-                                match handle_client_connection(stream).await {
-                                    Ok(()) => tracing::info!("client handler finished"),
-                                    Err(err) => tracing::error!("client handler aborted due to error: {err:?}")
-                                }
-                            }
-                            .instrument(tracing::info_span!("client", id = client_id)),
-                        );
+        let res = tokio::select! {
+            _ = shutdown.handle() => break,
+            res = listener.accept() => res,
+        };
+
+        let (stream, addr) = match res {
+            Ok(res) => res,
+            Err(err) => {
+                tracing::info!("failed to accept: {err}");
+                continue;
+            }
+        };
+
+        join_set.spawn(
+            async move {
+                tracing::info!("accepted connection from {}", addr);
+                match handle_client_connection(stream).await {
+                    Ok(()) => tracing::info!("client handler finished"),
+                    Err(err) => {
+                        tracing::error!("client handler aborted due to error: {err:?}")
                     }
-                    Err(e) => tracing::info!("failed to accept: {e}"),
                 }
             }
-        }
+            .instrument(tracing::info_span!("client", id = client_id)),
+        );
     }
 
     Ok(())
@@ -134,8 +139,8 @@ async fn handle_client_request(
     let mut join_set = JoinSet::new();
 
     let (exit_tx, exit_rx) = oneshot::channel();
-    let (kill_tx, kill_rx) = oneshot::channel();
-    join_set.spawn(wait_child(child, exit_tx, kill_rx).in_current_span());
+    let (signal_tx, signal_rx) = mpsc::channel(1);
+    join_set.spawn(wait_child(child, exit_tx, signal_rx).in_current_span());
 
     let (stdin_bytes_tx, stdin_bytes_rx) = mpsc::channel(1);
     let (stdin_res_tx, stdin_res_rx) = mpsc::channel(1);
@@ -157,7 +162,7 @@ async fn handle_client_request(
     join_set.spawn(
         receive_client(
             client_rx,
-            kill_tx,
+            signal_tx,
             stdin_bytes_tx,
             stdout_res_tx,
             stderr_res_tx,
@@ -189,17 +194,21 @@ async fn handle_client_request(
 async fn wait_child(
     mut child: Child,
     exit_tx: oneshot::Sender<Exit>,
-    kill_rx: oneshot::Receiver<()>,
+    mut signal_rx: mpsc::Receiver<Signal>,
 ) -> eyre::Result<()> {
     // If waiting for the child process failed, some unexpected system error may have occurred.
     // In this case, all related server tasks should be aborted.
     // To abort all tasks, return an error here.
-    let exit_status = tokio::select! {
-        status = child.wait() => status.wrap_err("failed to wait child process")?,
-        _ = kill_rx => {
-            tracing::debug!("received kill signal");
-            child.start_kill().wrap_err("failed to kill child process")?;
-            child.wait().await.wrap_err("failed to wait child process")?
+    let exit_status = loop {
+        tokio::select! {
+            status = child.wait() => break status.wrap_err("failed to wait child process")?,
+            signal = signal_rx.recv() => {
+                tracing::debug!("received kill signal");
+                if let (Some(pid), Some(signal)) = (child.id(), signal) {
+                    // ignore error
+                    let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), signal);
+                }
+            }
         }
     };
 
@@ -230,7 +239,7 @@ async fn wait_child(
 #[tracing::instrument(level = "debug", err, ret, skip_all)]
 async fn receive_client(
     mut client_rx: impl TryStream<Ok = ClientMessage, Error = io::Error> + Unpin,
-    kill_tx: oneshot::Sender<()>,
+    signal_tx: mpsc::Sender<Signal>,
     stdin_tx: mpsc::Sender<Arc<BytesMut>>,
     stdout_tx: mpsc::Sender<Result<(), String>>,
     stderr_tx: mpsc::Sender<Result<(), String>>,
@@ -248,13 +257,17 @@ async fn receive_client(
         tracing::trace!("received message: {:?}", msg);
 
         let res = match msg {
+            ClientMessage::Signal(msg) => {
+                // ignore error
+                let _ = signal_tx.send(msg).await;
+                Ok(())
+            }
             ClientMessage::Stdin(msg) => match msg {
-                OutputRequest::Output(msg) => stdin_tx
-                    .as_mut()
-                    .unwrap()
-                    .send(msg)
-                    .await
-                    .map_err(|_| eyre!("failed to send message to stdin task")),
+                OutputRequest::Output(msg) => {
+                    // ignore error
+                    let _ = stdin_tx.as_mut().unwrap().send(msg).await;
+                    Ok(())
+                }
                 OutputRequest::Terminated => {
                     let _ = stdin_tx.take();
                     Ok(())
@@ -282,7 +295,7 @@ async fn receive_client(
         }
     }
 
-    if let Ok(()) = kill_tx.send(()) {
+    if let Ok(()) = signal_tx.send(Signal::Kill).await {
         // If the process has already been terminated, the message will fail to be sent and will not be logged even if an error occurs.
         tracing::debug!("sent kill signal, maybe client disconnected unexpectedly");
     }

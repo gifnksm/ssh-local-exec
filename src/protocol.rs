@@ -21,6 +21,43 @@ pub struct SpawnMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Signal {
+    Alarm,
+    Child,
+    Hangup,
+    Interrupt,
+    Io,
+    Pipe,
+    Quit,
+    Terminate,
+    UserDefined1,
+    UserDefined2,
+    WindowChange,
+    Kill,
+}
+
+impl From<Signal> for Option<nix::sys::signal::Signal> {
+    fn from(signal: Signal) -> Self {
+        use nix::sys::signal::Signal as NixSignal;
+        let signal = match signal {
+            Signal::Alarm => NixSignal::SIGALRM,
+            Signal::Child => NixSignal::SIGCHLD,
+            Signal::Hangup => NixSignal::SIGHUP,
+            Signal::Interrupt => NixSignal::SIGINT,
+            Signal::Io => NixSignal::SIGINT,
+            Signal::Pipe => NixSignal::SIGPIPE,
+            Signal::Quit => NixSignal::SIGQUIT,
+            Signal::Terminate => NixSignal::SIGTERM,
+            Signal::UserDefined1 => NixSignal::SIGUSR1,
+            Signal::UserDefined2 => NixSignal::SIGUSR2,
+            Signal::WindowChange => NixSignal::SIGWINCH,
+            Signal::Kill => NixSignal::SIGKILL,
+        };
+        Some(signal)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Exit {
     Code(i32),
     Signal(i32),
@@ -47,6 +84,7 @@ pub enum ServerMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMessage {
+    Signal(Signal),
     Stdin(OutputRequest),
     Stdout(OutputResponse),
     Stderr(OutputResponse),
