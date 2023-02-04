@@ -1,4 +1,4 @@
-use std::{io, mem, sync::Arc};
+use std::{io, mem, ptr, sync::Arc};
 
 use bytes::BytesMut;
 use color_eyre::eyre::{self, eyre, WrapErr as _};
@@ -71,11 +71,13 @@ pub async fn read(
             }
         }
 
-        bytes.unsplit(mem::replace(
-            Arc::get_mut(&mut send_bytes).unwrap(),
-            BytesMut::new(),
-        ));
+        let unsend_bytes = bytes;
+        bytes = mem::replace(Arc::get_mut(&mut send_bytes).unwrap(), BytesMut::new());
+        let bytes_ptr = bytes.as_ptr();
+        bytes.unsplit(unsend_bytes);
         assert_eq!(bytes.len(), BUFFER_SIZE);
+        // ensure that the pointer is not changed (allocation is not performed)
+        assert!(ptr::eq(bytes.as_ptr(), bytes_ptr));
     }
 
     Ok(())
