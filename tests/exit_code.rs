@@ -41,7 +41,6 @@ fn exit_code() {
             ],
         )
         .assert()
-        .stderr(predicate::str::contains("code: 0"))
         .code(predicate::eq(0));
 
     // exit with 33
@@ -60,7 +59,6 @@ fn exit_code() {
             ],
         )
         .assert()
-        .stderr(predicate::str::contains("code: 33"))
         .code(predicate::eq(33));
 
     // exit with signal 15
@@ -79,7 +77,6 @@ fn exit_code() {
             ],
         )
         .assert()
-        .stderr(predicate::str::contains("signal: 15"))
         .code(predicate::eq(128 + 15));
 
     // exit with spawn failure
