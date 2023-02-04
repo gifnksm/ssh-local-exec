@@ -1,7 +1,8 @@
 use std::io;
 
 use color_eyre::eyre::eyre;
-use tracing_subscriber::EnvFilter;
+use tracing_error::ErrorLayer;
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 pub fn install() -> color_eyre::eyre::Result<()> {
     use std::env;
@@ -9,12 +10,13 @@ pub fn install() -> color_eyre::eyre::Result<()> {
         env::set_var("RUST_LOG", "info");
     }
 
-    tracing_subscriber::fmt()
+    let subscriber = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .with_writer(io::stderr)
         .with_target(false)
-        .try_init()
-        .map_err(|e| eyre!(e))?;
+        .finish()
+        .with(ErrorLayer::default());
+    subscriber.try_init().map_err(|e| eyre!(e))?;
 
     Ok(())
 }
