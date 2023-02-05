@@ -15,10 +15,13 @@ pub fn new_receiver<Transport, Item>(stream: Transport) -> Receiver<Transport, I
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SpawnMessage {
+pub struct SpawnRequest {
     pub command: String,
     pub args: Vec<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpawnResponse(pub Result<(), String>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Signal {
@@ -79,6 +82,7 @@ pub enum OutputRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerMessage {
+    SpawnResponse(SpawnResponse),
     Exit(Exit),
     Stdin(OutputResponse),
     Stdout(OutputRequest),
@@ -88,6 +92,7 @@ pub enum ServerMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMessage {
+    SpawnRequest(SpawnRequest),
     Signal(Signal),
     Stdin(OutputRequest),
     Stdout(OutputResponse),

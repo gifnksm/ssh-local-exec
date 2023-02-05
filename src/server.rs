@@ -19,7 +19,7 @@ use crate::{
     args::ListenAddress,
     protocol::{
         self, ClientMessage, Exit, OutputRequest, OutputResponse, ServerMessage, Signal,
-        SpawnMessage,
+        SpawnRequest, SpawnResponse,
     },
     socket::{SocketListener, SocketStream},
 };
@@ -79,29 +79,33 @@ async fn listen_client(listener: SocketListener, shutdown: Shutdown) -> eyre::Re
 async fn handle_client_connection(stream: SocketStream) -> eyre::Result<()> {
     let (read_stream, write_stream) = stream.into_split();
 
-    let mut bytes_rx = FramedRead::new(read_stream, LengthDelimitedCodec::new());
+    let bytes_rx = FramedRead::new(read_stream, LengthDelimitedCodec::new());
     let bytes_tx = FramedWrite::new(write_stream, LengthDelimitedCodec::new());
-
-    let spawn_msg: SpawnMessage = protocol::new_receiver(&mut bytes_rx)
-        .try_next()
-        .await
-        .wrap_err("failed to receive spawn message")?
-        .ok_or_else(|| eyre!("client sent no request"))?;
 
     let client_tx = protocol::new_sender::<_, ServerMessage>(bytes_tx);
     let client_rx = protocol::new_receiver::<_, ClientMessage>(bytes_rx);
 
-    handle_client_request(spawn_msg, client_tx, client_rx).await?;
+    handle_client_request(client_tx, client_rx).await?;
 
     Ok(())
 }
 
 async fn handle_client_request(
-    spawn_msg: SpawnMessage,
-    client_tx: impl Sink<ServerMessage, Error = io::Error> + Send + Unpin + 'static,
-    client_rx: impl TryStream<Ok = ClientMessage, Error = io::Error> + Send + Unpin + 'static,
+    mut client_tx: impl Sink<ServerMessage, Error = io::Error> + Send + Unpin + 'static,
+    mut client_rx: impl TryStream<Ok = ClientMessage, Error = io::Error> + Send + Unpin + 'static,
 ) -> eyre::Result<()> {
-    let SpawnMessage { command, args } = spawn_msg;
+    let spawn_req = client_rx
+        .try_next()
+        .await
+        .wrap_err("failed to receive message from client")?;
+
+    let spawn_req = match spawn_req {
+        Some(ClientMessage::SpawnRequest(spawn_req)) => spawn_req,
+        Some(_) => bail!("unexpected message from client"),
+        None => bail!("client disconnected"),
+    };
+
+    let SpawnRequest { command, args } = spawn_req;
 
     tracing::debug!("received spawn_msg: {:?}", command);
 
@@ -112,15 +116,32 @@ async fn handle_client_request(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
-    let mut child = cmd.spawn().wrap_err("failed to spawn child process");
-    let stdin = child.as_mut().ok().and_then(|child| child.stdin.take());
-    let stdout = child.as_mut().ok().and_then(|child| child.stdout.take());
-    let stderr = child.as_mut().ok().and_then(|child| child.stderr.take());
+    let child = cmd.spawn().wrap_err("failed to spawn child process");
 
-    match &child {
-        Ok(child) => tracing::debug!("spawned child process: {:?}", child.id()),
-        Err(err) => tracing::warn!("{err}"),
-    }
+    let spawn_resp = match &child {
+        Ok(child) => {
+            tracing::debug!("spawned child process: {:?}", child.id());
+            SpawnResponse(Ok(()))
+        }
+        Err(err) => {
+            tracing::warn!("{err}");
+            SpawnResponse(Err(format!("{err:?}")))
+        }
+    };
+    let spawn_resp = ServerMessage::SpawnResponse(spawn_resp);
+
+    client_tx
+        .send(spawn_resp)
+        .await
+        .wrap_err("failed to send spawn response")?;
+
+    let mut child = match child {
+        Ok(child) => child,
+        Err(_) => return Ok(()),
+    };
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
 
     let mut join_set = JoinSet::new();
 
@@ -178,40 +199,35 @@ async fn handle_client_request(
 
 #[tracing::instrument(level = "debug", err, ret, skip_all)]
 async fn wait_child(
-    child: Result<Child, eyre::Error>,
+    mut child: Child,
     exit_tx: oneshot::Sender<Exit>,
     mut signal_rx: mpsc::Receiver<Signal>,
 ) -> eyre::Result<()> {
-    let exit = match child {
-        Ok(mut child) => {
-            // If waiting for the child process failed, some unexpected system error may have occurred.
-            // In this case, all related server tasks should be aborted.
-            // To abort all tasks, return an error here.
-            let exit_status = loop {
-                tokio::select! {
-                    status = child.wait() => break status.wrap_err("failed to wait child process")?,
-                    signal = signal_rx.recv() => {
-                        tracing::debug!("received kill signal");
-                        if let (Some(pid), Some(signal)) = (child.id(), signal) {
-                            // ignore error
-                            let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), signal);
-                        }
-                    }
+    // If waiting for the child process failed, some unexpected system error may have occurred.
+    // In this case, all related server tasks should be aborted.
+    // To abort all tasks, return an error here.
+    let exit_status = loop {
+        tokio::select! {
+            status = child.wait() => break status.wrap_err("failed to wait child process")?,
+            signal = signal_rx.recv() => {
+                tracing::debug!("received kill signal");
+                if let (Some(pid), Some(signal)) = (child.id(), signal) {
+                    // ignore error
+                    let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), signal);
                 }
-            };
-
-            if let Some(code) = exit_status.code() {
-                tracing::debug!("child process exited with code: {}", code);
-                Exit::Code(code)
-            } else if let Some(signal) = exit_status.signal() {
-                tracing::debug!("child process exited with signal: {}", signal);
-                Exit::Signal(signal)
-            } else {
-                // As wait() failure, this error is unexpected.
-                bail!("child process exited with unknown status");
             }
         }
-        Err(err) => Exit::OtherError(format!("{err:?}")),
+    };
+
+    let exit = if let Some(code) = exit_status.code() {
+        tracing::debug!("child process exited with code: {}", code);
+        Exit::Code(code)
+    } else if let Some(signal) = exit_status.signal() {
+        tracing::debug!("child process exited with signal: {}", signal);
+        Exit::Signal(signal)
+    } else {
+        // As wait() failure, this error is unexpected.
+        bail!("child process exited with unknown status");
     };
 
     if let Err(err) = exit_tx
@@ -251,6 +267,10 @@ async fn receive_client(
         tracing::trace!("received message: {:?}", msg);
 
         let res = match msg {
+            ClientMessage::SpawnRequest(msg) => {
+                tracing::debug!("invalid mesage received: {msg:?}");
+                Err(eyre!("invalid message received: {msg:?}"))
+            }
             ClientMessage::Signal(msg) => {
                 // ignore error
                 let _ = signal_tx.send(msg).await;

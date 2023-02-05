@@ -21,7 +21,7 @@ use crate::{
     args::ConnectAddress,
     protocol::{
         self, ClientMessage, Exit, OutputRequest, OutputResponse, ServerMessage, Signal,
-        SpawnMessage,
+        SpawnRequest, SpawnResponse,
     },
     socket::SocketStream,
 };
@@ -38,15 +38,39 @@ pub async fn main(
     let (read_stream, write_stream) = stream.into_split();
 
     let bytes_rx = FramedRead::new(read_stream, LengthDelimitedCodec::new());
-    let mut bytes_tx = FramedWrite::new(write_stream, LengthDelimitedCodec::new());
+    let bytes_tx = FramedWrite::new(write_stream, LengthDelimitedCodec::new());
 
-    protocol::new_sender(&mut bytes_tx)
-        .send(SpawnMessage { command, args })
+    let mut server_rx = protocol::new_receiver::<_, ServerMessage>(bytes_rx);
+    let mut server_tx = protocol::new_sender::<_, ClientMessage>(bytes_tx);
+
+    let spawn_req = SpawnRequest { command, args };
+    let spawn_req = ClientMessage::SpawnRequest(spawn_req);
+
+    server_tx
+        .send(spawn_req)
         .await
         .wrap_err("failed to send spawn request")?;
 
-    let server_rx = protocol::new_receiver::<_, ServerMessage>(bytes_rx);
-    let server_tx = protocol::new_sender::<_, ClientMessage>(bytes_tx);
+    let resp = server_rx
+        .try_next()
+        .await
+        .wrap_err("failed to receive message from server")?;
+
+    match resp {
+        Some(ServerMessage::SpawnResponse(SpawnResponse(Ok(())))) => {}
+        Some(ServerMessage::SpawnResponse(SpawnResponse(Err(msg)))) => {
+            tracing::error!("{msg}");
+            return Ok(ExitCode::from(255));
+        }
+        Some(_) => {
+            tracing::error!("unexpected message from server");
+            return Ok(ExitCode::from(255));
+        }
+        None => {
+            tracing::error!("server disconnected");
+            return Ok(ExitCode::from(255));
+        }
+    }
 
     let mut join_set = JoinSet::new();
 
@@ -198,6 +222,10 @@ async fn receive_server(
     {
         tracing::trace!("received message: {:?}", msg);
         let res = match msg {
+            ServerMessage::SpawnResponse(msg) => {
+                tracing::debug!("invalid mesage received: {msg:?}");
+                Err(eyre!("invalid message received: {msg:?}"))
+            }
             ServerMessage::Exit(exit) => {
                 // close stdin task output channel if not cloed.
                 // this signals the sender thread to stdin thread exit
