@@ -43,7 +43,7 @@ async fn main() -> eyre::Result<ExitCode> {
     };
     let args = args.iter().copied().map(String::from).collect();
 
-    let exit_code = ssh_local_exec::client::main(&connect_address, command, args).await?;
+    let exit_code = ssh_local_exec::client::main(&connect_address, command, args).await;
 
     Ok(exit_code)
 }

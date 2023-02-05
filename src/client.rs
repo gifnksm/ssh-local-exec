@@ -30,20 +30,60 @@ pub async fn main(
     connect_address: &ConnectAddress,
     command: String,
     args: Vec<String>,
-) -> eyre::Result<ExitCode> {
-    let stream = SocketStream::connect(connect_address)
+) -> ExitCode {
+    let stream = match SocketStream::connect(connect_address)
         .await
-        .wrap_err_with(|| format!("failed to connect socket: {connect_address}"))?;
+        .wrap_err_with(|| format!("failed to connect socket: {connect_address}"))
+    {
+        Ok(stream) => stream,
+        Err(err) => {
+            tracing::error!("{err:?}");
+            return ExitCode::from(255);
+        }
+    };
 
     let (read_stream, write_stream) = stream.into_split();
 
     let bytes_rx = FramedRead::new(read_stream, LengthDelimitedCodec::new());
     let bytes_tx = FramedWrite::new(write_stream, LengthDelimitedCodec::new());
 
-    let mut server_rx = protocol::new_receiver::<_, ServerMessage>(bytes_rx);
     let mut server_tx = protocol::new_sender::<_, ClientMessage>(bytes_tx);
+    let mut server_rx = protocol::new_receiver::<_, ServerMessage>(bytes_rx);
 
     let spawn_req = SpawnRequest { command, args };
+
+    if let Err(err) = spawn_request(spawn_req, &mut server_tx, &mut server_rx).await {
+        tracing::error!("{err:?}");
+        return ExitCode::from(255);
+    }
+
+    let code = match communicate(server_tx, server_rx).await {
+        Ok(Exit::Code(code)) => {
+            tracing::debug!("command exited with code: {}", code);
+            u8::try_from(code).ok()
+        }
+        Ok(Exit::Signal(signal)) => {
+            tracing::debug!("command exited with signal: {}", signal);
+            u8::try_from(128 + signal).ok()
+        }
+        Ok(Exit::OtherError(error)) => {
+            tracing::error!("command exited with error: {}", error);
+            None
+        }
+        Err(err) => {
+            tracing::error!("{err:?}");
+            None
+        }
+    };
+
+    ExitCode::from(code.unwrap_or(255))
+}
+
+async fn spawn_request(
+    spawn_req: SpawnRequest,
+    mut server_tx: impl Sink<ClientMessage, Error = io::Error> + Send + Unpin,
+    mut server_rx: impl TryStream<Ok = ServerMessage, Error = io::Error> + Send + Unpin,
+) -> eyre::Result<()> {
     let spawn_req = ClientMessage::SpawnRequest(spawn_req);
 
     server_tx
@@ -60,18 +100,23 @@ pub async fn main(
         Some(ServerMessage::SpawnResponse(SpawnResponse(Ok(())))) => {}
         Some(ServerMessage::SpawnResponse(SpawnResponse(Err(msg)))) => {
             tracing::error!("{msg}");
-            return Ok(ExitCode::from(255));
+            bail!("failed to spawn process");
         }
-        Some(_) => {
-            tracing::error!("unexpected message from server");
-            return Ok(ExitCode::from(255));
+        Some(msg) => {
+            bail!("unexpected message from server: {msg:?}");
         }
         None => {
-            tracing::error!("server disconnected");
-            return Ok(ExitCode::from(255));
+            bail!("server disconnected");
         }
     }
 
+    Ok(())
+}
+
+async fn communicate(
+    server_tx: impl Sink<ClientMessage, Error = io::Error> + Send + Unpin + 'static,
+    server_rx: impl TryStream<Ok = ServerMessage, Error = io::Error> + Send + Unpin + 'static,
+) -> eyre::Result<Exit> {
     let mut join_set = JoinSet::new();
 
     let (stdin_bytes_tx, stdin_bytes_rx) = mpsc::channel(1);
@@ -143,16 +188,8 @@ pub async fn main(
         res.wrap_err("task join failure").and_then(|r| r)?;
     }
 
-    let code = match exit_code_rx.await {
-        Ok(Exit::Code(code)) => u8::try_from(code).ok(),
-        Ok(Exit::Signal(signal)) => u8::try_from(128 + signal).ok(),
-        Ok(Exit::OtherError(_)) => None,
-        Err(e) => {
-            tracing::error!("failed to receive exit code: {e:?}");
-            None
-        }
-    };
-    Ok(ExitCode::from(code.unwrap_or(255)))
+    let exit = exit_code_rx.await.wrap_err("failed to receive exit code")?;
+    Ok(exit)
 }
 
 #[tracing::instrument(level = "debug", err, ret, skip_all)]
@@ -231,17 +268,6 @@ async fn receive_server(
                 // this signals the sender thread to stdin thread exit
                 let _ = stdin_bytes_tx.lock().unwrap().take();
                 exit_tx.send_modify(|_| ());
-                match &exit {
-                    Exit::Code(code) => {
-                        tracing::debug!("command exited with code: {}", code);
-                    }
-                    Exit::Signal(signal) => {
-                        tracing::debug!("command exited with signal: {}", signal);
-                    }
-                    Exit::OtherError(ref error) => {
-                        tracing::error!("command exited with error: {}", error);
-                    }
-                }
                 exit_code_tx
                     .take()
                     .unwrap()
