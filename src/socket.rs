@@ -162,6 +162,13 @@ impl SocketListener {
         }
     }
 
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        match self {
+            Self::Unix(listener) => listener.local_addr().map(Into::into),
+            Self::Tcp(listener) => listener.local_addr().map(Into::into),
+        }
+    }
+
     pub fn as_tcp(&self) -> Option<&TcpListener> {
         if let Self::Tcp(listener) = self {
             Some(listener)

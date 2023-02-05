@@ -3,8 +3,8 @@ use std::{io, mem, os::unix::prelude::ExitStatusExt, process::Stdio, ptr, sync::
 use bytes::BytesMut;
 use color_eyre::eyre::{self, bail, eyre, WrapErr as _};
 use futures::{
-    channel::oneshot, future, stream, Sink, SinkExt as _, StreamExt as _, TryStream,
-    TryStreamExt as _,
+    channel::oneshot, future, stream, Sink, SinkExt as _, StreamExt as _, TryFutureExt as _,
+    TryStream, TryStreamExt as _,
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _},
@@ -26,18 +26,28 @@ use crate::{
 };
 use tracing::Instrument;
 
-pub async fn main(listen_address: &ListenAddress) -> eyre::Result<()> {
-    let listener = SocketListener::bind(&listen_address)
-        .await
-        .wrap_err_with(|| format!("failed to bind socket: {listen_address}"))?;
+pub async fn main(listen_address: &[ListenAddress]) -> eyre::Result<()> {
+    // Check that all listen addresses can be bound to sockets
+    let listeners = future::join_all(listen_address.iter().map(|addr| {
+        SocketListener::bind(addr)
+            .map_err(move |err| eyre!(err).wrap_err(format!("failed to bind socket: {addr}")))
+    }))
+    .await
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()?;
 
-    tracing::info!("listening on {listen_address}");
-
+    // Start listening for clients
     let shutdown = Shutdown::new()?;
-    listen_client(listener, shutdown)
-        .instrument(tracing::info_span!("listen", addr = %listen_address))
-        .await?;
+    let mut join_set = JoinSet::new();
+    for listener in listeners {
+        let shutdown = shutdown.clone();
+        join_set.spawn(listen_client(listener, shutdown));
+    }
 
+    // Wait all listeners to finish
+    while let Some(res) = join_set.join_next().await {
+        res.wrap_err("task join failure").and_then(|r| r)?;
+    }
     tracing::info!("shutting down");
 
     Ok(())
@@ -45,6 +55,8 @@ pub async fn main(listen_address: &ListenAddress) -> eyre::Result<()> {
 
 async fn listen_client(listener: SocketListener, shutdown: Shutdown) -> eyre::Result<()> {
     let mut join_set = JoinSet::new();
+
+    tracing::info!("listening on {}", listener.local_addr()?);
 
     for client_id in 0.. {
         let res = tokio::select! {
