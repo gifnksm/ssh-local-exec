@@ -27,7 +27,7 @@ async fn main() -> eyre::Result<ExitCode> {
         args,
     } = Args::parse();
 
-    let exit_code = ssh_local_exec::client::main(&connect_address, command, args).await?;
+    let exit_code = ssh_local_exec::client::main(&connect_address, command, args).await;
 
     Ok(exit_code)
 }
