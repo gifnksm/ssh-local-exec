@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use crate::socket::{SocketAddr, ToSocketAddrs};
 
 #[derive(Debug, clap::Args)]
-pub struct ListenAddress {
+pub struct ListenAddresses {
     /// Server endpoint address to listen
     ///
     /// Possible values:
@@ -14,9 +14,27 @@ pub struct ListenAddress {
     #[clap(
         long = "listen",
         value_name = "SOCKET_ADDRESS",
-        env = "SSH_LOCAL_EXEC_LISTEN_ADDRESS"
+        env = "SSH_LOCAL_EXEC_LISTEN_ADDRESS",
+        value_delimiter = ','
     )]
+    values: Vec<ListenAddress>,
+}
+
+impl ListenAddresses {
+    pub fn values(&self) -> &[ListenAddress] {
+        &self.values
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ListenAddress {
     value: String,
+}
+
+impl From<String> for ListenAddress {
+    fn from(value: String) -> Self {
+        Self { value }
+    }
 }
 
 #[async_trait]
