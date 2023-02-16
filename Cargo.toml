@@ -24,7 +24,7 @@ codecov = true
 [dependencies]
 async-trait = "0.1.64"
 bytes = { version = "1.4.0", features = ["serde"] }
-clap = { version = "4.1.4", features = ["derive", "env"] }
+clap = { version = "4.1.6", features = ["derive", "env"] }
 color-eyre = "0.6.2"
 derive_more = { version = "0.99.17", default-features = false, features = ["from"] }
 futures = { version = "0.3.26", default-features = false, features = ["std", "async-await"] }
