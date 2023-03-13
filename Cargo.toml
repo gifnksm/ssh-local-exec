@@ -27,7 +27,7 @@ bytes = { version = "1.4.0", features = ["serde"] }
 clap = { version = "4.1.8", features = ["derive", "env"] }
 color-eyre = "0.6.2"
 derive_more = { version = "0.99.17", default-features = false, features = ["from"] }
-futures = { version = "0.3.26", default-features = false, features = ["std", "async-await"] }
+futures = { version = "0.3.27", default-features = false, features = ["std", "async-await"] }
 nix = "0.26.2"
 serde = { version = "1.0.154", features = ["derive", "rc"] }
 thiserror = "1.0.39"
