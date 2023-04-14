@@ -41,7 +41,7 @@ tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 
 [dev-dependencies]
-assert_cmd = { version = "2.0.10", features = ["color"] }
+assert_cmd = { version = "2.0.11", features = ["color"] }
 predicates = "3.0.2"
 docker-utils = { path = "tests/docker-utils" }
 
