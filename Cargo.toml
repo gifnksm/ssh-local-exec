@@ -24,7 +24,7 @@ codecov = true
 [dependencies]
 async-trait = "0.1.68"
 bytes = { version = "1.4.0", features = ["serde"] }
-clap = { version = "4.1.14", features = ["derive", "env"] }
+clap = { version = "4.2.2", features = ["derive", "env"] }
 color-eyre = "0.6.2"
 derive_more = { version = "0.99.17", default-features = false, features = ["from"] }
 futures = { version = "0.3.28", default-features = false, features = ["std", "async-await"] }
@@ -41,8 +41,8 @@ tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 
 [dev-dependencies]
-assert_cmd = { version = "2.0.10", features = ["color"] }
-predicates = "3.0.2"
+assert_cmd = { version = "2.0.11", features = ["color"] }
+predicates = "3.0.3"
 docker-utils = { path = "tests/docker-utils" }
 
 [workspace]
