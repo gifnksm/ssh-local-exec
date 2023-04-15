@@ -22,8 +22,8 @@ use tracing::Instrument;
 use crate::{
     args::ConnectAddress,
     protocol::{
-        self, ClientMessage, Exit, OutputRequest, OutputResponse, ServerMessage, Signal,
-        SpawnRequest, SpawnResponse,
+        CborDecoder, CborEncoder, ClientMessage, DecodeError, EncodeError, Exit, OutputRequest,
+        OutputResponse, ServerMessage, Signal, SpawnRequest, SpawnResponse,
     },
     socket::SocketStream,
 };
@@ -46,11 +46,10 @@ pub async fn main(
 
     let (read_stream, write_stream) = stream.into_split();
 
-    let bytes_rx = FramedRead::new(read_stream, LengthDelimitedCodec::new());
-    let bytes_tx = FramedWrite::new(write_stream, LengthDelimitedCodec::new());
-
-    let mut server_tx = protocol::new_sender::<_, ClientMessage>(bytes_tx);
-    let mut server_rx = protocol::new_receiver::<_, ServerMessage>(bytes_rx);
+    let mut server_rx =
+        FramedRead::new(read_stream, LengthDelimitedCodec::new()).map_decoder(CborDecoder::new);
+    let mut server_tx =
+        FramedWrite::new(write_stream, LengthDelimitedCodec::new()).map_encoder(CborEncoder::new);
 
     let spawn_req = SpawnRequest { command, args };
 
@@ -83,8 +82,8 @@ pub async fn main(
 
 async fn spawn_request(
     spawn_req: SpawnRequest,
-    mut server_tx: impl Sink<ClientMessage, Error = io::Error> + Send + Unpin,
-    mut server_rx: impl TryStream<Ok = ServerMessage, Error = io::Error> + Send + Unpin,
+    mut server_tx: impl Sink<ClientMessage, Error = EncodeError> + Send + Unpin,
+    mut server_rx: impl TryStream<Ok = ServerMessage, Error = DecodeError> + Send + Unpin,
 ) -> eyre::Result<()> {
     let spawn_req = ClientMessage::SpawnRequest(spawn_req);
 
@@ -116,8 +115,8 @@ async fn spawn_request(
 }
 
 async fn communicate(
-    server_tx: impl Sink<ClientMessage, Error = io::Error> + Send + Unpin + 'static,
-    server_rx: impl TryStream<Ok = ServerMessage, Error = io::Error> + Send + Unpin + 'static,
+    server_tx: impl Sink<ClientMessage, Error = EncodeError> + Send + Unpin + 'static,
+    server_rx: impl TryStream<Ok = ServerMessage, Error = DecodeError> + Send + Unpin + 'static,
 ) -> eyre::Result<Exit> {
     let mut join_set = JoinSet::new();
 
@@ -231,7 +230,7 @@ async fn handle_signal(
 
 #[tracing::instrument(level = "debug", err, ret, skip_all)]
 async fn receive_server(
-    mut receiver: impl TryStream<Ok = ServerMessage, Error = io::Error> + Unpin,
+    mut receiver: impl TryStream<Ok = ServerMessage, Error = DecodeError> + Unpin,
     exit_code_tx: oneshot::Sender<Exit>,
     exit_tx: watch::Sender<()>,
     stdin_bytes_tx: Arc<Mutex<Option<mpsc::Sender<Arc<BytesMut>>>>>,
@@ -330,7 +329,7 @@ async fn receive_server(
 
 #[tracing::instrument(level = "debug", err, ret, skip_all)]
 async fn send_client(
-    mut server_tx: impl Sink<ClientMessage, Error = io::Error> + Send + Unpin + 'static,
+    mut server_tx: impl Sink<ClientMessage, Error = EncodeError> + Send + Unpin + 'static,
     signal_rx: mpsc::Receiver<Signal>,
     stdin_bytes_rx: mpsc::Receiver<Arc<BytesMut>>,
     stdout_res_rx: mpsc::Receiver<Result<(), String>>,
