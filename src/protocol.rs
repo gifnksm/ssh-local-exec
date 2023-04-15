@@ -1,17 +1,71 @@
-use std::sync::Arc;
+use std::{io, marker::PhantomData, sync::Arc};
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
-use tokio_serde::{formats::MessagePack, Framed};
+use tokio_util::codec::{Decoder, Encoder};
 
-pub type Sender<Transport, SinkItem> = Framed<Transport, (), SinkItem, MessagePack<(), SinkItem>>;
-pub fn new_sender<Transport, SinkItem>(stream: Transport) -> Sender<Transport, SinkItem> {
-    Sender::new(stream, MessagePack::default())
+pub type DecodeError = ciborium::de::Error<io::Error>;
+
+#[derive(Debug)]
+pub struct CborDecoder<Item, D> {
+    inner: D,
+    _item: PhantomData<Item>,
 }
 
-pub type Receiver<Transport, Item> = Framed<Transport, Item, (), MessagePack<Item, ()>>;
-pub fn new_receiver<Transport, Item>(stream: Transport) -> Receiver<Transport, Item> {
-    Receiver::new(stream, MessagePack::default())
+impl<Item, D> CborDecoder<Item, D> {
+    pub fn new(inner: D) -> Self {
+        Self {
+            inner,
+            _item: PhantomData,
+        }
+    }
+}
+
+impl<Item, D> Decoder for CborDecoder<Item, D>
+where
+    D: Decoder<Item = BytesMut, Error = io::Error>,
+    Item: for<'de> Deserialize<'de>,
+{
+    type Item = Item;
+    type Error = DecodeError;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let bytes = self.inner.decode(src)?;
+        let bytes = match bytes {
+            Some(bytes) => bytes,
+            None => return Ok(None),
+        };
+        let item = ciborium::de::from_reader(&*bytes)?;
+        Ok(Some(item))
+    }
+}
+
+pub type EncodeError = ciborium::ser::Error<io::Error>;
+
+#[derive(Debug)]
+pub struct CborEncoder<E> {
+    inner: E,
+}
+
+impl<E> CborEncoder<E> {
+    pub fn new(inner: E) -> Self {
+        Self { inner }
+    }
+}
+
+impl<Item, E> Encoder<Item> for CborEncoder<E>
+where
+    E: Encoder<Bytes, Error = io::Error>,
+    Item: Serialize,
+{
+    type Error = EncodeError;
+
+    fn encode(&mut self, item: Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let mut bytes = Vec::new();
+        ciborium::ser::into_writer(&item, &mut bytes)?;
+        self.inner.encode(Bytes::from(bytes), dst)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

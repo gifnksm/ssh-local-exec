@@ -19,8 +19,8 @@ use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use crate::{
     args::ListenAddress,
     protocol::{
-        self, ClientMessage, Exit, OutputRequest, OutputResponse, ServerMessage, Signal,
-        SpawnRequest, SpawnResponse,
+        CborDecoder, CborEncoder, ClientMessage, DecodeError, EncodeError, Exit, OutputRequest,
+        OutputResponse, ServerMessage, Signal, SpawnRequest, SpawnResponse,
     },
     socket::{SocketListener, SocketStream},
 };
@@ -92,11 +92,10 @@ async fn listen_client(listener: SocketListener, shutdown: Shutdown) -> eyre::Re
 async fn handle_client_connection(stream: SocketStream) -> eyre::Result<()> {
     let (read_stream, write_stream) = stream.into_split();
 
-    let bytes_rx = FramedRead::new(read_stream, LengthDelimitedCodec::new());
-    let bytes_tx = FramedWrite::new(write_stream, LengthDelimitedCodec::new());
-
-    let client_tx = protocol::new_sender::<_, ServerMessage>(bytes_tx);
-    let client_rx = protocol::new_receiver::<_, ClientMessage>(bytes_rx);
+    let client_rx =
+        FramedRead::new(read_stream, LengthDelimitedCodec::new()).map_decoder(CborDecoder::new);
+    let client_tx =
+        FramedWrite::new(write_stream, LengthDelimitedCodec::new()).map_encoder(CborEncoder::new);
 
     handle_client_request(client_tx, client_rx).await?;
 
@@ -104,8 +103,8 @@ async fn handle_client_connection(stream: SocketStream) -> eyre::Result<()> {
 }
 
 async fn handle_client_request(
-    mut client_tx: impl Sink<ServerMessage, Error = io::Error> + Send + Unpin + 'static,
-    mut client_rx: impl TryStream<Ok = ClientMessage, Error = io::Error> + Send + Unpin + 'static,
+    mut client_tx: impl Sink<ServerMessage, Error = EncodeError> + Send + Unpin + 'static,
+    mut client_rx: impl TryStream<Ok = ClientMessage, Error = DecodeError> + Send + Unpin + 'static,
 ) -> eyre::Result<()> {
     let spawn_req = client_rx
         .try_next()
@@ -253,7 +252,7 @@ async fn wait_child(
 
 #[tracing::instrument(level = "debug", err, ret, skip_all)]
 async fn receive_client(
-    mut client_rx: impl TryStream<Ok = ClientMessage, Error = io::Error> + Unpin,
+    mut client_rx: impl TryStream<Ok = ClientMessage, Error = DecodeError> + Unpin,
     signal_tx: mpsc::Sender<Signal>,
     stdin_tx: mpsc::Sender<Arc<BytesMut>>,
     stdout_tx: mpsc::Sender<Result<(), String>>,
@@ -351,7 +350,7 @@ async fn receive_client(
 
 #[tracing::instrument(level = "debug", err, ret, skip_all)]
 async fn send_client(
-    mut client_tx: impl Sink<ServerMessage, Error = io::Error> + Send + Unpin + 'static,
+    mut client_tx: impl Sink<ServerMessage, Error = EncodeError> + Send + Unpin + 'static,
     exit_rx: oneshot::Receiver<Exit>,
     stdin_res_rx: mpsc::Receiver<Result<(), String>>,
     stdout_bytes_rx: mpsc::Receiver<Arc<BytesMut>>,
