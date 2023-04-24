@@ -38,7 +38,7 @@ tokio-stream = { version = "0.1.12", features = [] }
 tokio-util = { version = "0.7.7", features = ["codec"] }
 tracing = "0.1.37"
 tracing-error = "0.2.0"
-tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 
 [dev-dependencies]
 assert_cmd = { version = "2.0.11", features = ["color"] }
