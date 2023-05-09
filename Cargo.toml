@@ -24,7 +24,7 @@ codecov = true
 [dependencies]
 async-trait = "0.1.68"
 bytes = { version = "1.4.0", features = ["serde"] }
-ciborium = "0.2.0"
+ciborium = "0.2.1"
 clap = { version = "4.2.7", features = ["derive", "env"] }
 color-eyre = "0.6.2"
 derive_more = { version = "0.99.17", default-features = false, features = ["from"] }
