@@ -933,9 +933,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-shutdown"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38f6b5f9a967211d2b3892dcb03a8251eb13ac8759e69f2a14471f6f779867da"
+checksum = "b0f30b85501e483eff3fd482c5b8ca6540fd3764fecf31bd2a7f1fcb77c648bb"
 dependencies = [
  "tokio",
  "tracing",
