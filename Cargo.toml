@@ -32,7 +32,7 @@ futures = { version = "0.3.28", default-features = false, features = ["std", "as
 nix = "0.26.2"
 serde = { version = "1.0.163", features = ["derive", "rc"] }
 thiserror = "1.0.40"
-tokio = { version = "1.28.1", features = ["macros", "net", "rt-multi-thread", "process", "io-util", "signal"] }
+tokio = { version = "1.28.2", features = ["macros", "net", "rt-multi-thread", "process", "io-util", "signal"] }
 tokio-shutdown = { version = "0.1.4", features = ["tracing"] }
 tokio-stream = { version = "0.1.14", features = [] }
 tokio-util = { version = "0.7.8", features = ["codec"] }
