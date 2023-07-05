@@ -31,7 +31,7 @@ derive_more = { version = "0.99.17", default-features = false, features = ["from
 futures = { version = "0.3.28", default-features = false, features = ["std", "async-await"] }
 nix = "0.26.2"
 serde = { version = "1.0.166", features = ["derive", "rc"] }
-thiserror = "1.0.40"
+thiserror = "1.0.41"
 tokio = { version = "1.29.1", features = ["macros", "net", "rt-multi-thread", "process", "io-util", "signal"] }
 tokio-shutdown = { version = "0.1.4", features = ["tracing"] }
 tokio-stream = { version = "0.1.14", features = [] }
