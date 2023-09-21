@@ -35,7 +35,7 @@ thiserror = "1.0.48"
 tokio = { version = "1.32.0", features = ["macros", "net", "rt-multi-thread", "process", "io-util", "signal"] }
 tokio-shutdown = { version = "0.1.4", features = ["tracing"] }
 tokio-stream = { version = "0.1.14", features = [] }
-tokio-util = { version = "0.7.8", features = ["codec"] }
+tokio-util = { version = "0.7.9", features = ["codec"] }
 tracing = "0.1.37"
 tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
