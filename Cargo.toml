@@ -30,7 +30,7 @@ color-eyre = "0.6.2"
 derive_more = { version = "0.99.17", default-features = false, features = ["from"] }
 futures = { version = "0.3.29", default-features = false, features = ["std", "async-await"] }
 nix = { version = "0.27.1", features = ["signal"] }
-serde = { version = "1.0.190", features = ["derive", "rc"] }
+serde = { version = "1.0.192", features = ["derive", "rc"] }
 thiserror = "1.0.50"
 tokio = { version = "1.33.0", features = ["macros", "net", "rt-multi-thread", "process", "io-util", "signal"] }
 tokio-shutdown = { version = "0.1.4", features = ["tracing"] }
