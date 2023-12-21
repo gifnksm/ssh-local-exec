@@ -22,7 +22,7 @@ github-actions = { workflows = ["rust-ci.yml"] }
 codecov = true
 
 [dependencies]
-async-trait = "0.1.74"
+async-trait = "0.1.75"
 bytes = { version = "1.5.0", features = ["serde"] }
 ciborium = "0.2.1"
 clap = { version = "4.4.11", features = ["derive", "env"] }
