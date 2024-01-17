@@ -42,7 +42,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 
 [dev-dependencies]
 assert_cmd = { version = "2.0.13", features = ["color"] }
-predicates = "3.0.4"
+predicates = "3.1.0"
 docker-utils = { path = "tests/docker-utils" }
 
 [workspace]
