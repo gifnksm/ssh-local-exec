@@ -34,7 +34,7 @@ serde = { version = "1.0.197", features = ["derive", "rc"] }
 thiserror = "1.0.57"
 tokio = { version = "1.36.0", features = ["macros", "net", "rt-multi-thread", "process", "io-util", "signal"] }
 tokio-shutdown = { version = "0.1.4", features = ["tracing"] }
-tokio-stream = { version = "0.1.14", features = [] }
+tokio-stream = { version = "0.1.15", features = [] }
 tokio-util = { version = "0.7.10", features = ["codec"] }
 tracing = "0.1.40"
 tracing-error = "0.2.0"
